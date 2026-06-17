@@ -128,3 +128,49 @@ async def generate_chains(
         ]
         results = await asyncio.gather(*tasks)
         return results
+
+async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> str:
+    """
+    Query OpenRouter to explain why the student's step is wrong and show the correct way.
+    """
+    if not OPENROUTER_API_KEY:
+        return f"Error detected at Step {error_step_idx+1}: '{steps[error_step_idx]}'. Please verify the arithmetic or algebraic operations in this step."
+        
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/amruth1181/amre-engine"
+    }
+    
+    steps_formatted = "\n".join([f"Step {i+1}: {step}" for i, step in enumerate(steps)])
+    error_step_text = steps[error_step_idx]
+    
+    prompt = (
+        f"A student is solving this math problem: '{problem}'\n\n"
+        f"Here is their step-by-step work:\n{steps_formatted}\n\n"
+        f"The verifier detected a mistake at Step {error_step_idx+1}: '{error_step_text}'\n\n"
+        f"Please write a tutor feedback response explaining why Step {error_step_idx+1} is incorrect, "
+        f"what the mistake is, and how to correct it. Keep it brief, helpful, and show the correct final solution."
+    )
+    
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a helpful and encouraging high-school math tutor."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.5,
+        "max_tokens": 512
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_URL, json=payload, headers=headers, timeout=30.0)
+            if response.status_code == 200:
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            else:
+                return f"Error: OpenRouter returned status {response.status_code}. The error is likely in Step {error_step_idx+1}."
+    except Exception as e:
+        return f"Could not generate tutor explanation: {e}. The verification flags Step {error_step_idx+1} as incorrect."
+

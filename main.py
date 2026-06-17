@@ -63,8 +63,10 @@ def get_user_id(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload["user_id"]
-    except:
+    except Exception as e:
+        print(f"❌ JWT Decode failed: {e}")
         return None
+
 
 # ==================== MOCK AI SOLVER ====================
 def solve_problem(problem: str) -> dict:
@@ -193,6 +195,10 @@ class SolveResponse(BaseModel):
     n_used: int
     chains: List[dict]
 
+class CheckRequest(BaseModel):
+    problem: str
+    solution_text: str
+
 @solve_router.post("/")
 def solve(request: SolveRequest, authorization: str = Header(None)):
     if not authorization:
@@ -229,6 +235,52 @@ def solve(request: SolveRequest, authorization: str = Header(None)):
         chains=chains
     )
 
+@solve_router.post("/checkwork")
+async def checkwork(request: CheckRequest, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(401, "No token provided")
+    
+    token = authorization.replace("Bearer ", "")
+    user_id = get_user_id(token)
+    if not user_id:
+        raise HTTPException(401, "Invalid token")
+        
+    import segment
+    import prm_scoring
+    import generate
+    
+    # 1. Segment user solution text into steps
+    steps = segment.segment_steps(request.solution_text)
+    if not steps:
+        raise HTTPException(400, "Could not identify distinct reasoning steps in your solution.")
+        
+    # 2. Score these steps
+    scores = []
+    badges = []
+    try:
+        prm_res = prm_scoring.score_steps(request.problem, steps)
+        scores = prm_res["scores"]
+        badges = prm_res["badges"]
+    except Exception as e:
+        print(f"Error scoring checkwork: {e}")
+        scores = [0.5] * len(steps)
+        badges = ["amber"] * len(steps)
+        
+    # 3. Locate the error step (weakest link)
+    error_step_idx = 0
+    if scores:
+        error_step_idx = int(min(range(len(scores)), key=lambda i: scores[i]))
+        
+    # 4. Generate the tutor explanation using OpenRouter
+    explanation = await generate.explain_error(request.problem, steps, error_step_idx)
+    
+    return {
+        "steps": steps,
+        "scores": scores,
+        "badges": badges,
+        "error_step": error_step_idx + 1,  # 1-indexed for the user display
+        "explanation": explanation
+    }
 # ==================== HISTORY ROUTER ====================
 history_router = APIRouter()
 
