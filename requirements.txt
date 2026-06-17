@@ -5,3 +5,6 @@ python-multipart
 PyJWT
 bcrypt
 passlib[bcrypt]
+onnxruntime
+transformers
+huggingface_hub
