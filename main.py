@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Header, HTTPException
+from fastapi import FastAPI, APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -8,11 +8,19 @@ import jwt
 from datetime import datetime, timedelta
 import random
 import os
+import asyncio
+import json
+from dotenv import load_dotenv
+
+
+# Load env variables at startup
+load_dotenv()
 
 # ==================== CONFIG ====================
 SECRET_KEY = os.environ.get("JWT_SECRET", "secret")
-DB_PATH = os.environ.get("DB_PATH", "/data/amre.db")
+DB_PATH = os.environ.get("DB_PATH", "./amre.db") # Default to local SQLite file for convenience
 ALGORITHM = "HS256"
+
 
 # ==================== DATABASE ====================
 def get_db():
@@ -274,3 +282,158 @@ def health():
 @app.get("/")
 def root():
     return {"message": "AMRE Engine is running!", "status": "ok"}
+
+@app.websocket("/ws/solve")
+async def websocket_solve(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        # 1. Receive request parameters
+        data = await websocket.receive_text()
+        request = json.loads(data)
+        
+        problem = request.get("problem")
+        mode = request.get("mode", "balanced")
+        token = request.get("token")
+        
+        # 2. Authenticate
+        user_id = None
+        if token:
+            user_id = get_user_id(token)
+            
+        if not user_id:
+            await websocket.send_json({"type": "error", "message": "Unauthorized / Invalid token"})
+            await websocket.close()
+            return
+            
+        # 3. Route problem (select strategy, n, temperature)
+        import router
+        route_info = router.route_problem(problem, mode)
+        await websocket.send_json({
+            "type": "route",
+            "strategy": route_info.strategy,
+            "n": route_info.n
+        })
+        
+        # 4. Generate candidate chains
+        import generate
+        import prm_scoring
+        import httpx
+        
+        chains = []
+        limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        
+        async with httpx.AsyncClient(limits=limits) as client:
+            tasks = [
+                generate.generate_single_chain(client, problem, route_info.temperature)
+                for _ in range(route_info.n)
+            ]
+            
+            # Execute concurrently and stream events as they complete
+            for chain_id, future in enumerate(asyncio.as_completed(tasks)):
+                chain = await future
+                steps = chain.get("steps", [])
+                
+                # Stream individual steps
+                for step_idx, step_text in enumerate(steps):
+                    await websocket.send_json({
+                        "type": "step",
+                        "chain_id": chain_id,
+                        "step_idx": step_idx,
+                        "latex": step_text
+                    })
+                
+                # Score steps using PRM
+                if steps:
+                    try:
+                        prm_res = prm_scoring.score_steps(problem, steps)
+                        chain["scores"] = prm_res["scores"]
+                        chain["badges"] = prm_res["badges"]
+                        
+                        # Stream scores
+                        for step_idx, (score, badge) in enumerate(zip(prm_res["scores"], prm_res["badges"])):
+                            band = badge.split("|")[0]  # strip any suffixes like |weakest_link
+                            await websocket.send_json({
+                                "type": "score",
+                                "chain_id": chain_id,
+                                "step_idx": step_idx,
+                                "score": score,
+                                "band": band
+                            })
+                    except Exception as e:
+                        print(f"Error scoring chain {chain_id}: {e}")
+                        chain["scores"] = [0.5] * len(steps)
+                        chain["badges"] = ["amber"] * len(steps)
+                        
+                        for step_idx in range(len(steps)):
+                            await websocket.send_json({
+                                "type": "score",
+                                "chain_id": chain_id,
+                                "step_idx": step_idx,
+                                "score": 0.5,
+                                "band": "amber"
+                            })
+                else:
+                    chain["scores"] = []
+                    chain["badges"] = []
+                    
+                await websocket.send_json({
+                    "type": "chain_done",
+                    "chain_id": chain_id,
+                    "answer": chain.get("answer", "Error")
+                })
+                
+                chains.append(chain)
+                
+        # 5. Consensus & voting
+        import consensus
+        best_answer, confidence, tally = consensus.run_consensus(chains)
+        
+        # Stream vote tally
+        await websocket.send_json({
+            "type": "vote",
+            "tally": tally,
+            "agreement": confidence
+        })
+        
+        # Find weakest step across all reasoning chains
+        weakest_chain_id = 0
+        weakest_step_idx = 0
+        min_score = 1.0
+        
+        for chain_idx, chain in enumerate(chains):
+            for step_idx, score in enumerate(chain.get("scores", [])):
+                if score < min_score:
+                    min_score = score
+                    weakest_chain_id = chain_idx
+                    weakest_step_idx = step_idx
+                    
+        # Save solving event to history database
+        conn = get_db()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO history (user_id, timestamp, problem, answer, confidence, mode, n_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, datetime.now().isoformat(), problem, best_answer, confidence, mode, route_info.n)
+        )
+        conn.commit()
+        conn.close()
+        
+        # Send final payload
+        await websocket.send_json({
+            "type": "final",
+            "answer": best_answer,
+            "confidence": confidence,
+            "weakest": {
+                "chain": weakest_chain_id,
+                "step": weakest_step_idx
+            }
+        })
+        
+    except WebSocketDisconnect:
+        print("WebSocket client disconnected")
+    except Exception as e:
+        print(f"Error in websocket handler: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except:
+            pass
+
