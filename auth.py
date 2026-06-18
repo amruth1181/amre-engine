@@ -1,60 +1,97 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+"""
+Auth & users (IMPLEMENTATION.md §3.9).
+Passwords hashed with bcrypt; a signed JWT is the opaque session token.
+All data endpoints derive user_id from the token — never trust a client id.
+"""
+import os
 from datetime import datetime, timedelta
-import sqlite3
+
 import bcrypt
 import jwt
-import os
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel
+
+import db
+
+SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-prod")
+ALGORITHM = "HS256"
 
 router = APIRouter()
-SECRET_KEY = "secret"
-ALGORITHM = "HS256"
+
 
 class UserCreate(BaseModel):
     username: str
     password: str
 
+
 class UserLogin(BaseModel):
     username: str
     password: str
 
-def get_db():
-    conn = sqlite3.connect("amre.db")
-    conn.row_factory = sqlite3.Row
-    return conn
 
-def create_token(user_id: int):
-    return jwt.encode({"user_id": user_id, "exp": datetime.now() + timedelta(days=7)}, SECRET_KEY, algorithm=ALGORITHM)
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(password: str, pw_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode(), pw_hash.encode())
+    except (ValueError, TypeError):
+        return False
+
+
+def create_token(user_id: int) -> str:
+    return jwt.encode(
+        {"user_id": user_id, "exp": datetime.utcnow() + timedelta(days=7)},
+        SECRET_KEY, algorithm=ALGORITHM,
+    )
+
+
+def decode_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload["user_id"]
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ JWT decode failed: {e}")
+        return None
+
+
+def require_user(authorization: str) -> int:
+    """Extract and validate the bearer token, returning user_id or raising 401."""
+    if not authorization:
+        raise HTTPException(401, "No token provided")
+    token = authorization.replace("Bearer ", "").strip()
+    user_id = decode_token(token)
+    if not user_id:
+        raise HTTPException(401, "Invalid token")
+    return user_id
+
 
 @router.post("/register")
 def register(user: UserCreate):
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id FROM users WHERE username = ?", (user.username,))
-    if cursor.fetchone():
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE username = ?", (user.username,))
+    if c.fetchone():
+        conn.close()
         raise HTTPException(400, "Username already exists")
-    
-    hashed = bcrypt.hashpw(user.password.encode(), bcrypt.gensalt()).decode()
-    cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (user.username, hashed))
+    c.execute(
+        "INSERT INTO users (username, pw_hash) VALUES (?, ?)",
+        (user.username, hash_password(user.password)),
+    )
     conn.commit()
-    user_id = cursor.lastrowid
+    user_id = c.lastrowid
     conn.close()
-    
     return {"user_id": user_id, "token": create_token(user_id)}
+
 
 @router.post("/login")
 def login(user: UserLogin):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (user.username,))
-    row = cursor.fetchone()
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute("SELECT user_id, pw_hash FROM users WHERE username = ?", (user.username,))
+    row = c.fetchone()
     conn.close()
-    
-    if not row:
+    if not row or not verify_password(user.password, row["pw_hash"]):
         raise HTTPException(401, "Invalid credentials")
-    
-    if not bcrypt.checkpw(user.password.encode(), row["password_hash"].encode()):
-        raise HTTPException(401, "Invalid credentials")
-    
-    return {"user_id": row["id"], "token": create_token(row["id"])}
+    return {"user_id": row["user_id"], "token": create_token(row["user_id"])}
