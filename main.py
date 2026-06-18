@@ -1,491 +1,381 @@
-from fastapi import FastAPI, APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+"""
+AMRE Engine — FastAPI app (IMPLEMENTATION.md §3.6).
+All logic + persistence live here. Streamlit talks to it over REST.
+Solve is request/response (stage progress shown by the Streamlit UI); the
+legacy /ws/solve WebSocket is kept for the existing Solve page.
+"""
+import json
+import time
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-import sqlite3
-import hashlib
-import jwt
-from datetime import datetime, timedelta
-import random
-import os
-import asyncio
-import json
 from dotenv import load_dotenv
 
+import db
+import auth
+import pipeline
+import explain
+import quizgen
+import topics as topics_mod
+import journal as journal_mod
+import ocr as ocr_mod
+import consensus
 
-# Load env variables at startup
 load_dotenv()
 
-# ==================== CONFIG ====================
-SECRET_KEY = os.environ.get("JWT_SECRET", "secret")
-DB_PATH = os.environ.get("DB_PATH", "./amre.db") # Default to local SQLite file for convenience
-ALGORITHM = "HS256"
+app = FastAPI(title="AMRE Engine", version="2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 
-# ==================== DATABASE ====================
-def get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password_hash TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            timestamp TEXT,
-            problem TEXT,
-            answer TEXT,
-            confidence REAL,
-            mode TEXT,
-            n_used INTEGER
-        )
-    ''')
-    conn.commit()
-    return conn
-
-def hash_password(password: str):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def create_token(user_id: int):
-    return jwt.encode({"user_id": user_id, "exp": datetime.now() + timedelta(days=7)}, SECRET_KEY, algorithm=ALGORITHM)
-
-def get_user_id(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload["user_id"]
-    except Exception as e:
-        print(f"❌ JWT Decode failed: {e}")
-        return None
+@app.on_event("startup")
+def _startup():
+    db.init_db()
+    db.migrate_legacy()
+    db.init_db()  # ensure all tables exist post-migration
 
 
-# ==================== MOCK AI SOLVER ====================
-def solve_problem(problem: str) -> dict:
-    """Mock solver that returns intelligent-looking responses"""
-    
-    # Simple pattern matching for common problems
-    problem_lower = problem.lower()
-    
-    # Linear equations: 2x + 5 = 15
-    if "x" in problem_lower and "=" in problem_lower:
-        # Try to extract numbers
-        import re
-        numbers = re.findall(r'\d+', problem)
-        
-        if len(numbers) >= 2:
-            # Simple linear equation solver
-            try:
-                # 2x + 5 = 15 -> x = (15-5)/2 = 5
-                if "+" in problem_lower or "-" in problem_lower:
-                    left = problem.split("=")[0]
-                    right = problem.split("=")[1]
-                    
-                    # Extract coefficient of x
-                    x_match = re.search(r'(\d*)[xX]\s*([+-])\s*(\d+)', left)
-                    if x_match:
-                        coef = int(x_match.group(1)) if x_match.group(1) else 1
-                        sign = x_match.group(2)
-                        const = int(x_match.group(3))
-                        right_val = int(right.strip())
-                        
-                        if sign == '+':
-                            x = (right_val - const) / coef
-                        else:
-                            x = (right_val + const) / coef
-                        
-                        answer = str(int(x)) if x.is_integer() else str(round(x, 2))
-                        confidence = 0.92
-                        steps = f"Step 1: Move constants to the right side\nStep 2: Divide both sides by {coef}\nStep 3: x = {answer}"
-                        
-                        return {
-                            "answer": answer,
-                            "chains": [{"text": steps, "score": 0.92}],
-                            "confidence": 0.92
-                        }
-            except:
-                pass
-    
-    # Quadratic equations
-    if "x²" in problem_lower or "x^2" in problem_lower:
-        return {
-            "answer": "x = -2 or x = -3",
-            "chains": [{"text": "Step 1: Factor the quadratic\nStep 2: (x+2)(x+3) = 0\nStep 3: x = -2 or x = -3", "score": 0.88}],
-            "confidence": 0.88
-        }
-    
-    # Fractions
-    if "/" in problem_lower and ("+" in problem_lower or "-" in problem_lower):
-        return {
-            "answer": "11/12",
-            "chains": [{"text": "Step 1: Find common denominator (12)\nStep 2: Convert both fractions\nStep 3: Add numerators", "score": 0.85}],
-            "confidence": 0.85
-        }
-    
-    # Default: generic algebra
-    return {
-        "answer": "5",
-        "chains": [{"text": "Step 1: Simplify the equation\nStep 2: Isolate the variable\nStep 3: Solve for the variable", "score": 0.80}],
-        "confidence": 0.80
-    }
-
-# ==================== AUTH ROUTER ====================
-auth_router = APIRouter()
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-@auth_router.post("/register")
-def register(user: UserCreate):
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id FROM users WHERE username = ?", (user.username,))
-    if cursor.fetchone():
-        raise HTTPException(400, "Username already exists")
-    
-    hashed = hash_password(user.password)
-    cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (user.username, hashed))
-    conn.commit()
-    user_id = cursor.lastrowid
-    conn.close()
-    
-    return {"user_id": user_id, "token": create_token(user_id)}
-
-@auth_router.post("/login")
-def login(user: UserLogin):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (user.username,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
-        raise HTTPException(401, "Invalid credentials")
-    
-    if hash_password(user.password) != row["password_hash"]:
-        raise HTTPException(401, "Invalid credentials")
-    
-    return {"user_id": row["id"], "token": create_token(row["id"])}
-
-# ==================== SOLVE ROUTER ====================
-solve_router = APIRouter()
-
+# ==================== MODELS ====================
 class SolveRequest(BaseModel):
     problem: str
-    mode: str = "balanced"
+    mode: str = "auto"
 
-class SolveResponse(BaseModel):
-    answer: str
-    confidence: float
-    route: str
-    n_used: int
-    chains: List[dict]
 
 class CheckRequest(BaseModel):
     problem: str
     solution_text: str
 
-@solve_router.post("/")
-def solve(request: SolveRequest, authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(401, "No token provided")
-    
-    token = authorization.replace("Bearer ", "")
-    user_id = get_user_id(token)
-    if not user_id:
-        raise HTTPException(401, "Invalid token")
-    
-    # Get solution from mock solver
-    result = solve_problem(request.problem)
-    
-    answer = result.get("answer", "5")
-    confidence = result.get("confidence", 0.85)
-    chains = result.get("chains", [{"text": "Solving...", "score": 0.80}])
-    n_used = 8
-    
-    # Save to history
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO history (user_id, timestamp, problem, answer, confidence, mode, n_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user_id, datetime.now().isoformat(), request.problem, answer, confidence, request.mode, n_used)
-    )
-    conn.commit()
-    conn.close()
-    
-    return SolveResponse(
-        answer=answer,
-        confidence=confidence,
-        route=request.mode,
-        n_used=n_used,
-        chains=chains
-    )
 
-@solve_router.post("/checkwork")
-async def checkwork(request: CheckRequest, authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(401, "No token provided")
-    
-    token = authorization.replace("Bearer ", "")
-    user_id = get_user_id(token)
-    if not user_id:
-        raise HTTPException(401, "Invalid token")
-        
-    import segment
-    import prm_scoring
-    import generate
-    
-    # 1. Segment user solution text into steps
-    steps = segment.segment_steps(request.solution_text)
-    if not steps:
-        raise HTTPException(400, "Could not identify distinct reasoning steps in your solution.")
-        
-    # 2. Score these steps
-    scores = []
-    badges = []
-    try:
-        prm_res = prm_scoring.score_steps(request.problem, steps)
-        scores = prm_res["scores"]
-        badges = prm_res["badges"]
-    except Exception as e:
-        print(f"Error scoring checkwork: {e}")
-        scores = [0.5] * len(steps)
-        badges = ["amber"] * len(steps)
-        
-    # 3. Locate the error step (weakest link)
-    error_step_idx = 0
-    if scores:
-        error_step_idx = int(min(range(len(scores)), key=lambda i: scores[i]))
-        
-    # 4. Generate the tutor explanation using OpenRouter
-    explanation = await generate.explain_error(request.problem, steps, error_step_idx)
-    
-    return {
-        "steps": steps,
-        "scores": scores,
-        "badges": badges,
-        "error_step": error_step_idx + 1,  # 1-indexed for the user display
-        "explanation": explanation
-    }
-# ==================== HISTORY ROUTER ====================
-history_router = APIRouter()
+class HintRequest(BaseModel):
+    problem: str
+    level: int = 1
 
-@history_router.get("/")
-def get_history(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(401, "No token provided")
-    
-    token = authorization.replace("Bearer ", "")
-    user_id = get_user_id(token)
-    if not user_id:
-        raise HTTPException(401, "Invalid token")
-    
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT timestamp, problem, answer, confidence, mode, n_used FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 20", (user_id,))
-    rows = c.fetchall()
-    conn.close()
-    
-    history = []
-    for row in rows:
-        history.append({
-            "timestamp": row["timestamp"],
-            "problem": row["problem"],
-            "answer": row["answer"],
-            "confidence": row["confidence"],
-            "mode": row["mode"],
-            "n_used": row["n_used"]
-        })
-    return {"history": history}
 
-# ==================== MAIN APP ====================
-app = FastAPI(title="AMRE Engine", version="1.0")
+class TopicRequest(BaseModel):
+    problem: str
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-app.include_router(auth_router, prefix="/auth", tags=["Auth"])
-app.include_router(solve_router, prefix="/solve", tags=["Solve"])
-app.include_router(history_router, prefix="/history", tags=["History"])
+class QuizRequest(BaseModel):
+    topic: str
 
+
+class QuizGradeRequest(BaseModel):
+    question: str
+    verified_answer: str
+    user_solution: str
+
+
+class OCRRequest(BaseModel):
+    image: str  # base64
+
+
+class SelfRateRequest(BaseModel):
+    item_id: str
+    user_conf: float
+
+
+# ==================== HEALTH ====================
 @app.get("/health")
 def health():
     return {"status": "ok", "message": "Engine is running!"}
+
 
 @app.get("/")
 def root():
     return {"message": "AMRE Engine is running!", "status": "ok"}
 
+
+# ==================== SOLVE ====================
+@app.post("/solve")
+async def solve(request: SolveRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    t0 = time.time()
+
+    result = await pipeline.run_solve(request.problem, request.mode)
+    latency_ms = round((time.time() - t0) * 1000, 1)
+
+    # persist to per-user history
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO history (user_id, ts, problem, problem_hash, mode, route, n_used, escalated, answer, confidence, latency) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, datetime.now().isoformat(), request.problem, db.problem_hash(request.problem),
+         request.mode, result["route"], result["n_used"], int(result["escalated"]),
+         result["answer"], result["confidence"], latency_ms),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "answer": result["answer"],
+        "confidence": result["confidence"],
+        "agreement": result["agreement"],
+        "route": result["route"],
+        "n_used": result["n_used"],
+        "escalated": result["escalated"],
+        "advisory": result["advisory"],
+        "verifier": result["verifier"],
+        "tally": result["tally"],
+        "chains": result["chains"],
+        "weakest_step": result["weakest"],
+        "verified_solution": result["verified_solution"],
+        "latency_ms": latency_ms,
+    }
+
+
+# ==================== CHECK MY WORK ====================
+@app.post("/checkwork")
+async def checkwork(request: CheckRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    result = await explain.check_work(request.problem, request.solution_text)
+
+    # log a mistake to the user's journal when an error was found
+    if not result.get("is_correct") and result.get("error_step"):
+        journal_mod.log_mistake(
+            user_id=user_id,
+            problem=request.problem,
+            topic=result.get("topic") or topics_mod.classify_topic(request.problem),
+            error_step=result["error_step"],
+            error_type=result.get("error_type") or "arithmetic",
+            explanation=result.get("explanation", ""),
+        )
+    return result
+
+
+# ==================== HINT LADDER ====================
+@app.post("/hint")
+async def hint(request: HintRequest, authorization: str = Header(None)):
+    auth.require_user(authorization)
+    return await explain.build_hints(request.problem, request.level)
+
+
+# ==================== TOPIC + READING ====================
+@app.post("/topic")
+def topic(request: TopicRequest, authorization: str = Header(None)):
+    auth.require_user(authorization)
+    t = topics_mod.classify_topic(request.problem)
+    return {
+        "topic": t,
+        "topic_label": topics_mod.pretty(t),
+        "resources": topics_mod.get_resources(t),
+        "mini_lesson": topics_mod.mini_lesson(t),
+    }
+
+
+# ==================== VERIFIED QUIZ ====================
+@app.post("/quiz")
+async def quiz(request: QuizRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    questions = await quizgen.generate_verified_quiz(request.topic)
+    if not questions:
+        raise HTTPException(503, "Could not verify any quiz questions for this topic right now.")
+
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute("INSERT INTO quiz (user_id, topic, ts) VALUES (?, ?, ?)",
+              (user_id, request.topic, datetime.now().isoformat()))
+    quiz_id = c.lastrowid
+    for q in questions:
+        c.execute(
+            "INSERT INTO quiz_item (quiz_id, question, verified_answer) VALUES (?, ?, ?)",
+            (quiz_id, q["question"], q["verified_answer"]),
+        )
+    conn.commit()
+    conn.close()
+
+    return {
+        "quiz_id": quiz_id,
+        "topic": request.topic,
+        "questions": [{"text": q["question"], "verified_answer": q["verified_answer"]} for q in questions],
+    }
+
+
+@app.post("/quiz/grade")
+async def quiz_grade(request: QuizGradeRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+
+    # quick answer match first
+    user_answer = consensus.normalize_answer(request.user_solution.splitlines()[-1] if request.user_solution else "")
+    correct = consensus.normalize_answer(request.verified_answer) == user_answer and bool(user_answer)
+
+    out = {"correct": correct}
+    if not correct:
+        # run the full check-my-work path to localize + explain the error
+        result = await explain.check_work(request.question, request.user_solution)
+        # check_work compares against its own verified answer; trust the quiz key for "correct"
+        correct = result.get("is_correct", False)
+        out["correct"] = correct
+        if not correct:
+            out["error_step"] = result.get("error_step")
+            out["explanation"] = result.get("explanation")
+            journal_mod.log_mistake(
+                user_id=user_id,
+                problem=request.question,
+                topic=topics_mod.classify_topic(request.question),
+                error_step=result.get("error_step") or 0,
+                error_type=result.get("error_type") or "arithmetic",
+                explanation=result.get("explanation", ""),
+            )
+
+    # record grade against the most recent matching quiz item, if present
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE quiz_item SET user_answer = ?, correct = ? "
+        "WHERE id = (SELECT qi.id FROM quiz_item qi JOIN quiz q ON qi.quiz_id = q.quiz_id "
+        "           WHERE q.user_id = ? AND qi.question = ? ORDER BY qi.id DESC LIMIT 1)",
+        (request.user_solution, int(out["correct"]), user_id, request.question),
+    )
+    conn.commit()
+    conn.close()
+    return out
+
+
+# ==================== OCR ====================
+@app.post("/ocr")
+def ocr(request: OCRRequest, authorization: str = Header(None)):
+    auth.require_user(authorization)
+    latex = ocr_mod.image_to_latex(request.image)
+    if latex is None:
+        raise HTTPException(503, "OCR is unavailable on this engine instance.")
+    return {"latex": latex}
+
+
+# ==================== SELF-RATE (metacognition) ====================
+@app.post("/selfrate")
+def selfrate(request: SelfRateRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO selfrate (user_id, item_id, user_conf, model_conf, correct, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, request.item_id, request.user_conf, None, None, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ==================== HISTORY ====================
+@app.get("/history")
+def get_history(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT ts, problem, mode, route, n_used, escalated, answer, confidence, latency "
+        "FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+        (user_id,),
+    )
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return {"history": rows}
+
+
+# ==================== JOURNAL + PROFILE ====================
+@app.get("/journal")
+def get_journal(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return {
+        "journal": journal_mod.get_journal(user_id),
+        "profile": journal_mod.profile(user_id),
+    }
+
+
+# ==================== TARGETED PRACTICE (weak-topic) ====================
+@app.get("/practice")
+async def practice(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    topic = journal_mod.weakest_topic(user_id)
+    if not topic:
+        return {"topic": None, "questions": [], "message": "No mistakes logged yet — solve or check some work first."}
+    questions = await quizgen.generate_verified_quiz(topic)
+    return {
+        "topic": topic,
+        "topic_label": topics_mod.pretty(topic),
+        "questions": [{"text": q["question"], "verified_answer": q["verified_answer"]} for q in questions],
+    }
+
+
+# ==================== LEGACY WEBSOCKET (kept for the existing Solve page) ====================
 @app.websocket("/ws/solve")
 async def websocket_solve(websocket: WebSocket):
     await websocket.accept()
     try:
-        # 1. Receive request parameters
         data = await websocket.receive_text()
-        request = json.loads(data)
-        
-        problem = request.get("problem")
-        mode = request.get("mode", "balanced")
-        token = request.get("token")
-        
-        # 2. Authenticate
-        user_id = None
-        if token:
-            user_id = get_user_id(token)
-            
+        req = json.loads(data)
+        problem = req.get("problem")
+        mode = req.get("mode", "balanced")
+        token = req.get("token")
+
+        user_id = auth.decode_token(token) if token else None
         if not user_id:
             await websocket.send_json({"type": "error", "message": "Unauthorized / Invalid token"})
             await websocket.close()
             return
-            
-        # 3. Route problem (select strategy, n, temperature)
-        import router
-        route_info = router.route_problem(problem, mode)
-        await websocket.send_json({
-            "type": "route",
-            "strategy": route_info.strategy,
-            "n": route_info.n
-        })
-        
-        # 4. Generate candidate chains
+
+        import router as router_mod
         import generate
         import prm_scoring
-        import httpx
-        
-        chains = []
-        limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        
-        async with httpx.AsyncClient(limits=limits) as client:
-            tasks = [
-                generate.generate_single_chain(client, problem, route_info.temperature)
-                for _ in range(route_info.n)
-            ]
-            
-            # Execute concurrently and stream events as they complete
-            for chain_id, future in enumerate(asyncio.as_completed(tasks)):
-                chain = await future
-                steps = chain.get("steps", [])
-                
-                # Stream individual steps
-                for step_idx, step_text in enumerate(steps):
-                    await websocket.send_json({
-                        "type": "step",
-                        "chain_id": chain_id,
-                        "step_idx": step_idx,
-                        "latex": step_text
-                    })
-                
-                # Score steps using PRM
-                if steps:
-                    try:
-                        prm_res = prm_scoring.score_steps(problem, steps)
-                        chain["scores"] = prm_res["scores"]
-                        chain["badges"] = prm_res["badges"]
-                        
-                        # Stream scores
-                        for step_idx, (score, badge) in enumerate(zip(prm_res["scores"], prm_res["badges"])):
-                            band = badge.split("|")[0]  # strip any suffixes like |weakest_link
-                            await websocket.send_json({
-                                "type": "score",
-                                "chain_id": chain_id,
-                                "step_idx": step_idx,
-                                "score": score,
-                                "band": band
-                            })
-                    except Exception as e:
-                        print(f"Error scoring chain {chain_id}: {e}")
-                        chain["scores"] = [0.5] * len(steps)
-                        chain["badges"] = ["amber"] * len(steps)
-                        
-                        for step_idx in range(len(steps)):
-                            await websocket.send_json({
-                                "type": "score",
-                                "chain_id": chain_id,
-                                "step_idx": step_idx,
-                                "score": 0.5,
-                                "band": "amber"
-                            })
-                else:
-                    chain["scores"] = []
-                    chain["badges"] = []
-                    
+
+        rt = router_mod.route(problem, mode)
+        await websocket.send_json({"type": "route", "strategy": rt.strategy, "n": rt.n})
+
+        chains = await generate.generate_chains(problem, rt.n, rt.temperature)
+        for chain_id, chain in enumerate(chains):
+            steps = chain.get("steps", [])
+            for step_idx, step_text in enumerate(steps):
+                await websocket.send_json({"type": "step", "chain_id": chain_id, "step_idx": step_idx, "latex": step_text})
+            try:
+                prm = prm_scoring.score_steps(problem, steps) if steps else {"scores": [], "badges": []}
+                chain["scores"], chain["badges"] = prm["scores"], prm["badges"]
+            except Exception as e:  # noqa: BLE001
+                print(f"WS PRM error chain {chain_id}: {e}")
+                chain["scores"] = [0.5] * len(steps)
+                chain["badges"] = ["amber"] * len(steps)
+            for step_idx, (score, badge) in enumerate(zip(chain["scores"], chain["badges"])):
                 await websocket.send_json({
-                    "type": "chain_done",
-                    "chain_id": chain_id,
-                    "answer": chain.get("answer", "Error")
+                    "type": "score", "chain_id": chain_id, "step_idx": step_idx,
+                    "score": score, "band": badge.split("|")[0],
                 })
-                
-                chains.append(chain)
-                
-        # 5. Consensus & voting
-        import consensus
-        best_answer, confidence, tally = consensus.run_consensus(chains)
-        
-        # Stream vote tally
-        await websocket.send_json({
-            "type": "vote",
-            "tally": tally,
-            "agreement": confidence
-        })
-        
-        # Find weakest step across all reasoning chains
-        weakest_chain_id = 0
-        weakest_step_idx = 0
-        min_score = 1.0
-        
-        for chain_idx, chain in enumerate(chains):
-            for step_idx, score in enumerate(chain.get("scores", [])):
-                if score < min_score:
-                    min_score = score
-                    weakest_chain_id = chain_idx
-                    weakest_step_idx = step_idx
-                    
-        # Save solving event to history database
-        conn = get_db()
+            await websocket.send_json({"type": "chain_done", "chain_id": chain_id, "answer": chain.get("answer", "Error")})
+
+        best_answer, agreement, tally = consensus.run_consensus(chains)
+        import calibration
+        confidence = calibration.calibrate(agreement)
+        await websocket.send_json({"type": "vote", "tally": tally, "agreement": agreement})
+
+        weakest = pipeline._weakest_link(chains)
+
+        conn = db.get_db()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO history (user_id, timestamp, problem, answer, confidence, mode, n_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, datetime.now().isoformat(), problem, best_answer, confidence, mode, route_info.n)
+            "INSERT INTO history (user_id, ts, problem, problem_hash, mode, route, n_used, escalated, answer, confidence, latency) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, datetime.now().isoformat(), problem, db.problem_hash(problem), mode,
+             rt.strategy, len(chains), 0, best_answer, confidence, None),
         )
         conn.commit()
         conn.close()
-        
-        # Send final payload
+
         await websocket.send_json({
-            "type": "final",
-            "answer": best_answer,
-            "confidence": confidence,
-            "weakest": {
-                "chain": weakest_chain_id,
-                "step": weakest_step_idx
-            }
+            "type": "final", "answer": best_answer, "confidence": confidence,
+            "weakest": {"chain": weakest["chain"], "step": weakest["step"]},
         })
-        
     except WebSocketDisconnect:
         print("WebSocket client disconnected")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Error in websocket handler: {e}")
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
-        except:
+        except Exception:
             pass
-
