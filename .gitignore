@@ -4,4 +4,9 @@ __pycache__/
 *.db
 .DS_Store
 .env
+.venv/
+.venv_test/
+.cache/
+# calibration.pkl is a build artifact — fit it with fit_calibration.py (don't commit a synthetic one)
+calibration.pkl
 
