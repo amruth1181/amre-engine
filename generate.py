@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import httpx
 from typing import List, Dict, Any, AsyncIterator
@@ -128,6 +129,57 @@ async def generate_chains(
         ]
         results = await asyncio.gather(*tasks)
         return results
+
+async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
+    """Over-generate candidate quiz questions for a topic (IMPLEMENTATION.md §9.3).
+    The engine verifies them afterwards; here we just produce raw candidates."""
+    pretty = topic.replace("_", " ")
+    if not OPENROUTER_API_KEY:
+        # deterministic mock bank so the verified-quiz path still runs offline
+        bank = [
+            "Solve for x: 2x + 5 = 15",
+            "Solve for x: 3x - 7 = 11",
+            "What is 25% of 80?",
+            "Factor: x^2 + 5x + 6",
+            "Solve for x: x^2 - 9 = 0",
+            "A bag has 3 red and 2 blue balls. P(red)?",
+            "Simplify: (2/3) + (1/6)",
+            "What is the derivative of x^2?",
+            "Find the area of a circle with radius 4.",
+            "Solve for x: 5x = 35",
+        ]
+        return [bank[i % len(bank)] for i in range(n)]
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/amruth1181/amre-engine",
+    }
+    prompt = (
+        f"Generate {n} distinct, self-contained {pretty} practice problems suitable for a "
+        f"high-school student. Each must have a single unambiguous numeric or short answer. "
+        f"Return ONLY the problems, one per line, no numbering, no answers."
+    )
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a math problem author. Output only problems, one per line."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.9,
+        "max_tokens": 1024,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_URL, json=payload, headers=headers, timeout=45.0)
+            if response.status_code == 200:
+                text = response.json()["choices"][0]["message"]["content"]
+                lines = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip() for ln in text.splitlines()]
+                return [ln for ln in lines if len(ln) > 8][:n]
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ quiz question generation failed: {e}")
+    return []
+
 
 async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> str:
     """
