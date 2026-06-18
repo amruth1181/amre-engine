@@ -42,7 +42,7 @@ Per-user reads
 ## Offline scripts
 - `python fit_calibration.py --data runs.jsonl` — fit `calibration.pkl` (isotonic agreement→P(correct))
 - `python preseed_demo.py` — seed demo users + history + journal for the pitch
-- `python export_prm_onnx.py` — export/quantize the Skywork 1.5B PRM to ONNX int8
+- `python huggingface/export_prm_onnx.py` — export/quantize the Skywork 1.5B PRM to ONNX int8 (see `huggingface/DEPLOY.md`)
 
 ## Local run
 ```
