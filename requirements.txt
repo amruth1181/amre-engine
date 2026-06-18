@@ -2,9 +2,19 @@ fastapi
 uvicorn[standard]
 pydantic
 python-multipart
+python-dotenv
+httpx
+requests
 PyJWT
 bcrypt
 passlib[bcrypt]
+numpy
+scikit-learn
+sympy
 onnxruntime
+optimum[onnxruntime]
 transformers
 huggingface_hub
+# OCR (§3.8) — heavy; remove if the image gets too large (OCR is first on the cut list, §7)
+Pillow
+pix2tex
