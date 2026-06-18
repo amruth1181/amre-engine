@@ -2,7 +2,7 @@ import re
 from typing import List, Tuple
 
 def segment_steps(text: str) -> List[str]:
-    """
+    r"""
     Split the reasoning chain into individual steps.
     Forces split on 'Step \d+:' patterns.
     """
