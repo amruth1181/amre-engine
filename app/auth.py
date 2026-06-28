@@ -11,7 +11,7 @@ import jwt
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-import db
+from . import db
 
 SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-prod")
 ALGORITHM = "HS256"
