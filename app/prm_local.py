@@ -50,14 +50,19 @@ def _load_model():
     _tokenizer = AutoTokenizer.from_pretrained(
         MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir
     )
-    # NOTE: do NOT use low_cpu_mem_usage=True here. With this tied-weight custom
-    # model (tie_word_embeddings=true), the meta-device incremental load leaves the
-    # embeddings uninitialized -> NaN activations -> every step scores 0.5. A full
-    # fp32 load (~9GB peak) fits the 16GB Space and loads the weights correctly.
-    model = AutoModel.from_pretrained(
-        MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
-        torch_dtype=torch.float32,
-    ).eval()
+    # Full fp32 load (no low_cpu_mem_usage). Force EAGER attention: this model's
+    # default SDPA path produces NaN activations on CPU -> every step scores 0.5.
+    try:
+        model = AutoModel.from_pretrained(
+            MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
+            torch_dtype=torch.float32, attn_implementation="eager",
+        ).eval()
+    except Exception as e:  # noqa: BLE001 — custom model may not accept the kwarg
+        print(f"⚠️ eager attn_implementation not accepted ({e}); loading default")
+        model = AutoModel.from_pretrained(
+            MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
+            torch_dtype=torch.float32,
+        ).eval()
 
     if QUANTIZE:
         try:
@@ -128,7 +133,15 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
                  or getattr(_model, "score", None))
         per_token = vhead(hidden).squeeze(-1)[0]   # [seq] raw per-token reward
         _raw = per_token.detach().float()
+        # pinpoint where NaN originates: input hidden states vs the value-head weights
+        _hid = hidden.detach().float()
+        _emb_w = _model.get_input_embeddings().weight
+        _vh_w = getattr(vhead, "summary", vhead)
+        _vh_w = getattr(_vh_w, "weight", None)
         _dbg = (f"hidden={tuple(hidden.shape)} vhead_out={tuple(per_token.shape)} "
+                f"hidden_nan={bool(torch.isnan(_hid).any())} "
+                f"emb_w_nan={bool(torch.isnan(_emb_w).any())} "
+                f"vhead_w_nan={bool(torch.isnan(_vh_w).any()) if _vh_w is not None else 'NA'} "
                 f"raw_min={float(_raw.min()):.4f} raw_max={float(_raw.max()):.4f} "
                 f"nan_or_inf={bool(torch.isnan(_raw).any() or torch.isinf(_raw).any())}")
         # everything stays under no_grad; move to a plain python list of floats
