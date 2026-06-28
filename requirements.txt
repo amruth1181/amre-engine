@@ -19,8 +19,11 @@ sympy
 transformers
 huggingface_hub
 accelerate
-# OCR (§3.8) — heavy; remove if the image gets too large (OCR is first on the cut list, §7)
+# OCR (§3.8) — Pillow stays (tiny). pix2tex is DISABLED: it pulls torchvision +
+# opencv and breaks the free CPU Space build. OCR is the first cut item (§7); the
+# /ocr endpoint already returns 503 gracefully when pix2tex is absent. Re-enable
+# by uncommenting once the Space has headroom.
 Pillow
-pix2tex
+# pix2tex
 # dev/test (§6)
 pytest
