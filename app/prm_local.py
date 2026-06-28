@@ -50,18 +50,21 @@ def _load_model():
     _tokenizer = AutoTokenizer.from_pretrained(
         MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir
     )
-    # Full fp32 load (no low_cpu_mem_usage). Force EAGER attention: this model's
-    # default SDPA path produces NaN activations on CPU -> every step scores 0.5.
+    # Load in the model's NATIVE bfloat16 (config torch_dtype=bfloat16). Forcing
+    # fp32 left some internal buffers in bf16 while activations were fp32 -> mixed
+    # precision -> NaN hidden states (every step scored 0.5). bf16 keeps everything
+    # consistent and halves the RAM. Eager attention avoids the SDPA-on-CPU path.
+    load_dtype = torch.bfloat16
     try:
         model = AutoModel.from_pretrained(
             MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
-            torch_dtype=torch.float32, attn_implementation="eager",
+            torch_dtype=load_dtype, attn_implementation="eager",
         ).eval()
     except Exception as e:  # noqa: BLE001 — custom model may not accept the kwarg
         print(f"⚠️ eager attn_implementation not accepted ({e}); loading default")
         model = AutoModel.from_pretrained(
             MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
-            torch_dtype=torch.float32,
+            torch_dtype=load_dtype,
         ).eval()
 
     if QUANTIZE:
