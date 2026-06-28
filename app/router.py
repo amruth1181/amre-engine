@@ -7,11 +7,37 @@ Precedence:
     (escalation itself lives in pipeline.run_solve: after N=8, if agreement<0.5
      double N up to the cap)
 """
+import json
+import os
 from dataclasses import dataclass
 
 # free-tier cap (see IMPLEMENTATION.md §0 warning); raise if a paid provider is used
 N_CAP_FREE = 16
 N_CAP_CAREFUL = 32
+
+# fitted thresholds from scripts/fit_router_thresholds.py, if present (else hardcoded defaults)
+_DEFAULTS = {
+    "max_len_easy": 50,
+    "max_len_medium": 150,
+    "complex_keywords": ["integral", "derivative", "prove", "matrix", "combinatorics",
+                         "probability", "quadratic", "logarithm", "sequence", "series"],
+}
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PARAMS_PATH = os.environ.get("ROUTER_PARAMS_PATH", os.path.join(_REPO_ROOT, "router_params.json"))
+
+
+def _load_params():
+    if os.path.exists(_PARAMS_PATH):
+        try:
+            with open(_PARAMS_PATH) as f:
+                p = json.load(f)
+            return {**_DEFAULTS, **p}
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ Failed to load router_params.json: {e} — using defaults")
+    return _DEFAULTS
+
+
+_PARAMS = _load_params()
 
 
 @dataclass
@@ -25,17 +51,13 @@ class Route:
 
 def difficulty(problem: str) -> str:
     """Cheap easy/medium/hard estimate from surface features.
-    Replaced by fit_router_thresholds.py output (router_params.json) when available."""
+    Thresholds come from router_params.json (fit_router_thresholds.py) when present."""
     prob_len = len(problem)
     has_latex = "$" in problem or "\\" in problem
-    is_complex = any(
-        kw in problem.lower()
-        for kw in ["integral", "derivative", "prove", "matrix", "combinatorics",
-                   "probability", "quadratic", "logarithm", "sequence", "series"]
-    )
-    if prob_len < 50 and not is_complex and not has_latex:
+    is_complex = any(kw in problem.lower() for kw in _PARAMS["complex_keywords"])
+    if prob_len < _PARAMS["max_len_easy"] and not is_complex and not has_latex:
         return "easy"
-    if prob_len < 150 and not is_complex:
+    if prob_len < _PARAMS["max_len_medium"] and not is_complex:
         return "medium"
     return "hard"
 
