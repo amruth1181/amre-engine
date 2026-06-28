@@ -50,11 +50,13 @@ def _load_model():
     _tokenizer = AutoTokenizer.from_pretrained(
         MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir
     )
-    # low_cpu_mem_usage avoids loading a second full copy of the weights during
-    # from_pretrained — this is what keeps the fp32 load from OOM-ing the Space.
+    # NOTE: do NOT use low_cpu_mem_usage=True here. With this tied-weight custom
+    # model (tie_word_embeddings=true), the meta-device incremental load leaves the
+    # embeddings uninitialized -> NaN activations -> every step scores 0.5. A full
+    # fp32 load (~9GB peak) fits the 16GB Space and loads the weights correctly.
     model = AutoModel.from_pretrained(
         MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
-        torch_dtype=torch.float32, low_cpu_mem_usage=True,
+        torch_dtype=torch.float32,
     ).eval()
 
     if QUANTIZE:
