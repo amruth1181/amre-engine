@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, List
 from collections import Counter
 
-import db
+from . import db
 
 
 def log_mistake(user_id: int, problem: str, topic: str, error_step: int,

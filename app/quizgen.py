@@ -13,8 +13,8 @@ import asyncio
 import time
 from typing import Dict, Any, List
 
-import generate
-import pipeline
+from . import generate
+from . import pipeline
 
 OVERGEN = 12          # how many candidates to author
 SHIP_COUNT = 5        # how many verified questions to ship
