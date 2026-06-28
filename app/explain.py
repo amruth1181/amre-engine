@@ -13,12 +13,12 @@ Hint ladder: pure slicing of the already-computed verified solution.
 import re
 from typing import Dict, Any, List
 
-import segment
-import prm_scoring
-import generate
-import consensus
-import topics as topics_mod
-import pipeline
+from . import segment
+from . import prm_scoring
+from . import generate
+from . import consensus
+from . import topics as topics_mod
+from . import pipeline
 
 # error-type buckets (IMPLEMENTATION.md §9.6)
 ERROR_TYPES = ["sign", "arithmetic", "concept", "formula", "incomplete"]
