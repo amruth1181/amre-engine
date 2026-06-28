@@ -14,15 +14,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-import db
-import auth
-import pipeline
-import explain
-import quizgen
-import topics as topics_mod
-import journal as journal_mod
-import ocr as ocr_mod
-import consensus
+from . import db
+from . import auth
+from . import pipeline
+from . import explain
+from . import quizgen
+from . import topics as topics_mod
+from . import journal as journal_mod
+from . import ocr as ocr_mod
+from . import consensus
 
 load_dotenv()
 
@@ -323,9 +323,9 @@ async def websocket_solve(websocket: WebSocket):
             await websocket.close()
             return
 
-        import router as router_mod
-        import generate
-        import prm_scoring
+        from . import router as router_mod
+        from . import generate
+        from . import prm_scoring
 
         rt = router_mod.route(problem, mode)
         await websocket.send_json({"type": "route", "strategy": rt.strategy, "n": rt.n})
@@ -350,7 +350,7 @@ async def websocket_solve(websocket: WebSocket):
             await websocket.send_json({"type": "chain_done", "chain_id": chain_id, "answer": chain.get("answer", "Error")})
 
         best_answer, agreement, tally = consensus.run_consensus(chains)
-        import calibration
+        from . import calibration
         confidence = calibration.calibrate(agreement)
         await websocket.send_json({"type": "vote", "tally": tally, "agreement": agreement})
 
