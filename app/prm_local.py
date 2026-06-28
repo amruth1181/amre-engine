@@ -21,7 +21,10 @@ import numpy as np
 # downloads it at first use. Override with PRM_MODEL_REPO if you mirror it.
 MODEL_REPO = os.environ.get("PRM_MODEL_REPO", "Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B")
 STEP_TOKEN = "\n"
-QUANTIZE = os.environ.get("PRM_QUANTIZE", "1") not in ("0", "false", "False")
+# int8 dynamic quantization is OFF by default: the quantized kernels crash on
+# this model at inference ("ChooseQuantizationParams: min should be <= max").
+# fp32 is stable. Set PRM_QUANTIZE=1 to opt back in if a future torch fixes it.
+QUANTIZE = os.environ.get("PRM_QUANTIZE", "0") in ("1", "true", "True")
 MAX_TOKENS = int(os.environ.get("PRM_MAX_TOKENS", "4096"))
 
 # lazy globals
