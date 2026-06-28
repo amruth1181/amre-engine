@@ -57,7 +57,8 @@ def synthetic():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None)
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "calibration.pkl"))
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ap.add_argument("--out", default=os.path.join(_repo_root, "calibration.pkl"))
     args = ap.parse_args()
 
     if args.data and os.path.exists(args.data):

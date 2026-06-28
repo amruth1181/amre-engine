@@ -5,15 +5,17 @@ Creates demo accounts with pre-populated history + mistake journal so the
 My-Progress dashboard and weak-topic profile look alive on Day 1 of the pitch.
 Writes straight to SQLite (no API/provider calls needed).
 
-Usage:  python preseed_demo.py
+Usage:  python scripts/preseed_demo.py   (run from the repo root)
 Demo logins printed at the end.
 """
+import os
+import sys
 from datetime import datetime, timedelta
 import random
 
-import db
-import auth
-import topics as topics_mod
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app import db
+from app import auth
 
 DEMO_USERS = [
     ("demo_alice", "password123"),
