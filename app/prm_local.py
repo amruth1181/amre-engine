@@ -103,7 +103,10 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
     mask = torch.ones_like(ids)
 
     with torch.no_grad():
-        out = _model(input_ids=ids, attention_mask=mask)
+        # use_cache=False skips the model's DynamicCache.from_legacy_cache() path,
+        # which newer transformers removed (Skywork code targets transformers ~4.44).
+        # We do a single forward for scoring, so the cache is unnecessary anyway.
+        out = _model(input_ids=ids, attention_mask=mask, use_cache=False)
     # Qwen2ForRewardModel returns a SequenceClassifierOutputWithPast whose
     # .logits are the value-head's per-token raw scores. Take batch 0, reduce a
     # trailing singleton class dim, and sigmoid to map to a 0..1 reward.
