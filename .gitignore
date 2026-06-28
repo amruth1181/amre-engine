@@ -7,7 +7,9 @@ __pycache__/
 .venv/
 .venv_test/
 .cache/
-# build artifacts — regenerate with the scripts/ fitters (don't commit synthetic ones)
+# build arifacts — regenerate with the scripts/ fitters (don't commit synthetic ones)
 calibration.pkl
 router_params.json
+.claude/
+DEBUGGING_JOURNEY.md
 
