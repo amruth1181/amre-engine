@@ -16,11 +16,14 @@ origin  https://huggingface.co/spaces/amruth1181/amre-engine
 | File | Why it must be at root |
 |---|---|
 | `README.md` | Holds the Space YAML frontmatter (`sdk: docker`, `app_port: 7860`). HF reads it from root to configure the Space. |
-| `Dockerfile` | HF builds the container from the root Dockerfile (`COPY . .`, `CMD uvicorn main:app --port 7860`). |
-| `*.py`, `requirements.txt` | They are the Docker build context / app entrypoint. |
+| `Dockerfile` | HF builds the container from the root Dockerfile (`COPY . .`, `CMD uvicorn app.main:app --port 7860`). |
+| `requirements.txt` | Docker build context / dependency install. |
+| `app/` package | The engine code (`app.main:app` is the entrypoint). `COPY . .` brings it in. |
 
-Moving any of these breaks the build. That is why only HF *helper* files
-(model export script + docs) live in `huggingface/`.
+The engine modules live in `app/`, the offline prep scripts in `scripts/`, and
+tests in `tests/` (see root `README.md`). `README.md`, `Dockerfile`, and
+`requirements.txt` MUST stay at the repo root or the Space build breaks. HF
+*helper* files (model export script + docs) live in `huggingface/`.
 
 ### Deploy
 Pushing to `origin main` rebuilds the Space automatically:
@@ -35,7 +38,8 @@ git push origin main
 | `OPENROUTER_API_KEY` | Policy model (Qwen2.5-7B) via OpenRouter |
 | `JWT_SECRET` | Signing key for session tokens (don't ship the default) |
 | `COLAB_PRM_URL` | Optional — preferred 7B PRM tunnel; auto-fails over to the ONNX floor |
-| `PRM_MODEL_REPO` | Optional override; defaults to `amruth1181/skywork-prm-1.5b-onnx-int8` |
+| `PRM_MODEL_REPO` | Optional override; defaults to `Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B` (public) |
+| `PRM_QUANTIZE` | Optional; `1` (default) applies int8 dynamic quant, `0` runs fp32 |
 | `DB_PATH` | Optional; defaults to `/data/amre.db` (persistent disk) when `/data` exists |
 
 ### Persistent storage
@@ -48,29 +52,29 @@ Add a scheduled `GET /health` every ~30 min so the pitch URL never cold-starts
 
 ---
 
-## 2. The PRM = a Hugging Face **model** repo
+## 2. The PRM floor — pulled directly from Skywork (no upload)
 
-`prm_onnx.py` downloads the quantized PRM at runtime via `snapshot_download`:
+`app/prm_local.py` loads the PRM at runtime with `transformers`
+(`AutoModel.from_pretrained(..., trust_remote_code=True)`) and int8 dynamic
+quantization on CPU:
 
 ```
-amruth1181/skywork-prm-1.5b-onnx-int8   (int8 ONNX, ~1.6 GB)
+Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B   (public; ~1.5B params)
 ```
 
-Base model: `Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B`.
+The Skywork PRM has a **custom reward-head architecture** (`Qwen2RMConfig`) that
+`optimum-cli` cannot export to ONNX, so we run it in native PyTorch. Because the
+Skywork repo is public, the Space downloads it itself on first use — **there is
+no model to build or upload, and no Colab step.** Override with `PRM_MODEL_REPO`
+only if you mirror the weights elsewhere.
 
-### Build & upload the model
-Run `huggingface/export_prm_onnx.py` (export → `quantize_dynamic` int8 → benchmark),
-then upload the produced folder:
-
-```python
-from huggingface_hub import HfApi
-api = HfApi()
-api.create_repo(repo_id="amruth1181/skywork-prm-1.5b-onnx-int8", repo_type="model", exist_ok=True)
-api.upload_folder(folder_path="./skywork-prm-onnx-int8",
-                  repo_id="amruth1181/skywork-prm-1.5b-onnx-int8", repo_type="model")
+Verify it's really scoring (not on the 0.5 fallback) from the Space terminal:
+```
+python scripts/check_prm.py
 ```
 
-See `MODEL_CARD.md` for the model card to drop into that repo.
+The preferred 7B tier still runs on Colab GPU behind `COLAB_PRM_URL`, with
+automatic failover to this floor.
 
 ---
 

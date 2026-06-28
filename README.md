@@ -13,8 +13,14 @@ pinned: false
 FastAPI backend for the Adaptive Math Reasoning Engine (AMRE).
 
 The engine holds all logic + persistence. Stack: router → generation (OpenRouter
-Qwen2.5-7B) → PRM scoring (Colab 7B with ONNX 1.5B failover) → PRM-weighted
-consensus → isotonic calibration → per-user SQLite. See `IMPLEMENTATION.md`.
+Qwen2.5-7B) → PRM scoring (Colab 7B with a local Skywork-1.5B PyTorch floor) →
+PRM-weighted consensus → isotonic calibration → per-user SQLite. See
+`IMPLEMENTATION.md`.
+
+The PRM floor (`app/prm_local.py`) runs Skywork-o1-Open-PRM-Qwen-2.5-1.5B in
+native PyTorch with int8 dynamic quantization — its custom reward-head
+architecture can't be exported to ONNX. The official Skywork repo is public, so
+the Space downloads it at first use (no model upload needed).
 
 ## Endpoints (all data endpoints derive `user_id` from the bearer token)
 
@@ -54,7 +60,7 @@ huggingface/ HF Hub model export + deploy docs
 - `python scripts/prm_score_correlation.py --pairs pairs.jsonl` — Spearman ρ, 1.5B floor vs 7B PRM
 - `python scripts/sanity_check_calibration.py --data labeled.jsonl` — validate calibration (|pred−actual| < 5pp/bin)
 - `python scripts/preseed_demo.py` — seed demo users + history + journal for the pitch
-- `python huggingface/export_prm_onnx.py` — export/quantize the Skywork 1.5B PRM to ONNX int8 (see `huggingface/DEPLOY.md`)
+- `python scripts/check_prm.py` — diagnose whether the PRM is producing real (non-0.5) scores
 
 `calibration.pkl` and `router_params.json` are build artifacts (gitignored); the
 engine falls back to identity calibration / hardcoded thresholds if they're absent.

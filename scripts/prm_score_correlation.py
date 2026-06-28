@@ -66,7 +66,7 @@ def load_pairs(path):
 
 def score_chains(path):
     """Score each chain's steps with both PRMs and pair them up step-by-step."""
-    from app import prm_onnx
+    from app import prm_local
     from app.prm_scoring import ColabPRM
 
     colab = ColabPRM()
@@ -86,7 +86,7 @@ def score_chains(path):
             if not steps:
                 continue
             a = colab.score_steps(problem, steps)
-            b = prm_onnx.score_steps(problem, steps)
+            b = prm_local.score_steps(problem, steps)
             n = min(len(a), len(b))
             s7.extend(a[:n])
             s15.extend(b[:n])
