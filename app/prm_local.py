@@ -73,10 +73,11 @@ def _load_model():
                 model, {torch.nn.Linear}, dtype=torch.qint8
             )
             print("✅ PRM loaded (Skywork 1.5B, int8 dynamic-quantized, CPU)")
-        except Exception as e:  # noqa: BLE001 — fall back to fp32 if quant unsupported
-            print(f"⚠️ int8 quantization failed ({e}); running fp32")
+        except Exception as e:  # noqa: BLE001 — fall back if quant unsupported
+            print(f"⚠️ int8 quantization failed ({e}); running unquantized")
     else:
-        print("✅ PRM loaded (Skywork 1.5B, fp32, CPU)")
+        print(f"✅ PRM loaded (Skywork 1.5B, dtype={next(model.parameters()).dtype}, "
+              f"transformers={__import__('transformers').__version__}, CPU)")
 
     _model = model
     _step_token_id = _tokenizer.encode(STEP_TOKEN)[-1]

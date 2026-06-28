@@ -16,7 +16,11 @@ sympy
 # NOTE: torch is installed separately in the Dockerfile from the CPU-only index
 # (the default CUDA wheel is ~2.5GB and breaks the free CPU Space). Do not add
 # `torch` here or pip will pull the CUDA build.
-transformers
+# transformers PINNED to 4.44.2: Skywork's vendored modeling code targets ~4.44.
+# Newer transformers changed the attention-mask utils and removed
+# DynamicCache.from_legacy_cache, which made the forward emit NaN hidden states
+# (every PRM step scored 0.5). Pinning makes the custom code run as designed.
+transformers==4.44.2
 huggingface_hub
 accelerate
 # OCR (§3.8) — Pillow stays (tiny). pix2tex is DISABLED: it pulls torchvision +
