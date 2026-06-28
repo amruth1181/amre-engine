@@ -8,7 +8,8 @@ present, so the engine always returns *something* sane.
 import os
 import pickle
 
-_CAL_PATH = os.environ.get("CALIBRATION_PATH", os.path.join(os.path.dirname(__file__), "calibration.pkl"))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CAL_PATH = os.environ.get("CALIBRATION_PATH", os.path.join(_REPO_ROOT, "calibration.pkl"))
 _model = None
 _loaded = False
 
