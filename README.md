@@ -37,15 +37,35 @@ Per-user reads
 - `GET /journal` → mistake journal + error-type / weak-topic profile
 - `GET /practice` → verified practice questions on the user's weakest topic
 - `GET /health` — health check (also used by the keep-alive ping)
-- `WS /ws/solve` — legacy streaming endpoint (kept for the current Solve page)
+- `WS /ws/solve` — legacy streaming endpoint (no longer used by the frontend; the Solve page now uses request/response `/solve` with `st.status` stage progress, per §3.7)
 
-## Offline scripts
-- `python fit_calibration.py --data runs.jsonl` — fit `calibration.pkl` (isotonic agreement→P(correct))
-- `python preseed_demo.py` — seed demo users + history + journal for the pitch
+## Layout
+```
+app/        FastAPI engine package (main + all logic/persistence modules)
+scripts/    offline prep scripts (run from the repo root)
+tests/      pytest suite (§6)
+frontend/   Streamlit app (Home + pages/ + lib/ + .streamlit/)
+huggingface/ HF Hub model export + deploy docs
+```
+
+## Offline scripts (run from the repo root)
+- `python scripts/fit_calibration.py --data runs.jsonl` — fit `calibration.pkl` (isotonic agreement→P(correct))
+- `python scripts/fit_router_thresholds.py --data regimes.jsonl` — fit `router_params.json` (difficulty thresholds)
+- `python scripts/prm_score_correlation.py --pairs pairs.jsonl` — Spearman ρ, 1.5B floor vs 7B PRM
+- `python scripts/sanity_check_calibration.py --data labeled.jsonl` — validate calibration (|pred−actual| < 5pp/bin)
+- `python scripts/preseed_demo.py` — seed demo users + history + journal for the pitch
 - `python huggingface/export_prm_onnx.py` — export/quantize the Skywork 1.5B PRM to ONNX int8 (see `huggingface/DEPLOY.md`)
+
+`calibration.pkl` and `router_params.json` are build artifacts (gitignored); the
+engine falls back to identity calibration / hardcoded thresholds if they're absent.
 
 ## Local run
 ```
 pip install -r requirements.txt
-uvicorn main:app --reload --port 7860
+uvicorn app.main:app --reload --port 7860     # engine on :7860
+pytest -q                                      # run the test suite
+
+# frontend (separate shell)
+pip install -r frontend/requirements.txt
+streamlit run frontend/Home.py                 # set ENGINE_URL in frontend/.streamlit/secrets.toml
 ```

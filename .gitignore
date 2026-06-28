@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 .venv_test/
 .cache/
-# calibration.pkl is a build artifact — fit it with fit_calibration.py (don't commit a synthetic one)
+# build artifacts — regenerate with the scripts/ fitters (don't commit synthetic ones)
 calibration.pkl
+router_params.json
 
