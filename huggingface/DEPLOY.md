@@ -9,7 +9,7 @@ This project uses Hugging Face in **two** separate places. Keep them straight.
 The repo root *is* the Space. Remote:
 
 ```
-origin  https://huggingface.co/spaces/amruth1181/amre-engine
+origin  https://huggingface.co/spaces/amruth1181/amre-engine-v2
 ```
 
 ### Files that MUST stay at the repo root (do not move into this folder)
