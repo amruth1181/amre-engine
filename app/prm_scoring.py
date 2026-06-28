@@ -7,7 +7,7 @@ import time
 import requests
 from typing import List, Optional
 
-import prm_onnx
+from . import prm_onnx
 
 # ==================== COLAB PRM (7B, preferred) ====================
 COLAB_PRM_URL = os.environ.get("COLAB_PRM_URL", "")  # e.g. https://xxxx.trycloudflare.com
