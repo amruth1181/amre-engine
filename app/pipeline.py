@@ -12,11 +12,11 @@ Non-streaming request/response — stage progress is surfaced by the Streamlit
 import asyncio
 from typing import Dict, Any, List
 
-import generate
-import prm_scoring
-import consensus
-import calibration
-import router as router_mod
+from . import generate
+from . import prm_scoring
+from . import consensus
+from . import calibration
+from . import router as router_mod
 
 ESCALATION_AGREEMENT_THRESHOLD = 0.5
 
