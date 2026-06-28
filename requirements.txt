@@ -11,10 +11,12 @@ passlib[bcrypt]
 numpy
 scikit-learn
 sympy
-onnxruntime
-optimum[onnxruntime]
+# PRM floor: Skywork 1.5B runs in native PyTorch (custom arch can't ONNX-export);
+# int8 dynamic quantization is applied at load time on CPU.
+torch
 transformers
 huggingface_hub
+accelerate
 # OCR (§3.8) — heavy; remove if the image gets too large (OCR is first on the cut list, §7)
 Pillow
 pix2tex
