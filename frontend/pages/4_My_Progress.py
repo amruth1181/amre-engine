@@ -72,3 +72,20 @@ if journal:
     st.dataframe(jdf[cols], use_container_width=True, hide_index=True)
 else:
     st.caption("Your journal is empty.")
+
+# ---- study-sheet PDF export (§9.9) ----
+st.markdown("### 📄 Study sheet")
+st.caption("Download a revision PDF: your mistakes + explanations + reading material + recent quiz.")
+if st.button("Generate study sheet"):
+    try:
+        with st.spinner("Building your study sheet…"):
+            st.session_state["study_pdf"] = api.studysheet()
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Could not generate study sheet: {e}")
+if st.session_state.get("study_pdf"):
+    st.download_button(
+        "⬇️ Download study sheet (PDF)",
+        data=st.session_state["study_pdf"],
+        file_name="amre_study_sheet.pdf",
+        mime="application/pdf",
+    )

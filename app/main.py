@@ -23,6 +23,7 @@ from . import topics as topics_mod
 from . import journal as journal_mod
 from . import ocr as ocr_mod
 from . import consensus
+from . import studysheet as studysheet_mod
 
 load_dotenv()
 
@@ -304,6 +305,21 @@ async def practice(authorization: str = Header(None)):
         "topic_label": topics_mod.pretty(topic),
         "questions": [{"text": q["question"], "verified_answer": q["verified_answer"]} for q in questions],
     }
+
+
+# ==================== STUDY-SHEET PDF EXPORT (§9.9) ====================
+@app.get("/studysheet")
+def studysheet(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    pdf_bytes = studysheet_mod.build_study_sheet(user_id)
+    if pdf_bytes is None:
+        raise HTTPException(503, "PDF export is unavailable on this engine instance.")
+    from fastapi import Response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=amre_study_sheet.pdf"},
+    )
 
 
 # ==================== LEGACY WEBSOCKET (kept for the existing Solve page) ====================

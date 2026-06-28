@@ -97,6 +97,13 @@ def practice() -> dict:
     return _get("/practice")
 
 
+def studysheet() -> bytes:
+    """Fetch the per-user study-sheet PDF as raw bytes (§9.9)."""
+    r = requests.get(f"{engine_url()}/studysheet", headers=_headers(), timeout=90)
+    r.raise_for_status()
+    return r.content
+
+
 def healthy() -> bool:
     try:
         return _get("/health").get("status") == "ok"
