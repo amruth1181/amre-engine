@@ -9,8 +9,9 @@ small + CPU-friendly, the always-available floor scorer.
 Scoring follows Skywork's own inference recipe (model_utils/io_utils.py):
   problem + steps are tokenized with a "\n" step separator; the reward is read
   at the LAST token of each step (flag==1). The HF checkpoint exposes
-  Qwen2ForRewardModel (via auto_map), whose forward returns per-token value-head
-  logits in .logits — we sigmoid those and read one score per step.
+  Qwen2ForRewardModel, whose forward POOLS to one reward per sequence, so we run
+  the value head (v_head) over all hidden states ourselves to get per-token
+  rewards, sigmoid them, and read one score per step.
 """
 import os
 from typing import List
@@ -108,18 +109,22 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
     with torch.no_grad():
         # use_cache=False skips the model's DynamicCache.from_legacy_cache() path,
         # which newer transformers removed (Skywork code targets transformers ~4.44).
-        # We do a single forward for scoring, so the cache is unnecessary anyway.
-        out = _model(input_ids=ids, attention_mask=mask, use_cache=False)
-    # Qwen2ForRewardModel returns a SequenceClassifierOutputWithPast whose
-    # .logits are the value-head's per-token raw scores. Take batch 0, reduce a
-    # trailing singleton class dim, and sigmoid to map to a 0..1 reward.
-    logits = getattr(out, "logits", None)
-    if logits is None:
-        logits = out[0] if isinstance(out, (tuple, list)) else out
-    logits = logits[0]                       # [seq], [seq,1] or [seq,C]
-    if logits.dim() == 2:
-        logits = logits[:, 0] if logits.shape[-1] == 1 else logits[:, -1]
-    rewards = torch.sigmoid(logits)          # raw value-head score -> probability
+        # output_hidden_states=True so we can apply the value head to EVERY token:
+        # Qwen2ForRewardModel.forward POOLS to a single reward (out.logits is
+        # [batch], one number for the whole sequence), but a PRM needs a per-step
+        # score, so we run v_head over all positions ourselves.
+        out = _model(input_ids=ids, attention_mask=mask,
+                     use_cache=False, output_hidden_states=True)
+
+    hidden = out.hidden_states[-1] if getattr(out, "hidden_states", None) else None
+    if hidden is None:  # fallback: call the base transformer directly
+        base = getattr(_model, "model", None) or getattr(_model, "transformer", None)
+        hidden = base(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state
+
+    vhead = (getattr(_model, "v_head", None) or getattr(_model, "value_head", None)
+             or getattr(_model, "score", None))
+    per_token = vhead(hidden).squeeze(-1)[0]   # [seq] raw per-token reward
+    rewards = torch.sigmoid(per_token)         # -> 0..1
 
     idxs = [i for i, f in enumerate(reward_flags) if f == 1]
     scores = [float(rewards[i]) for i in idxs]
