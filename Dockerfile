@@ -4,8 +4,11 @@ FROM python:3.11-slim
 RUN useradd -m -u 1000 user
 WORKDIR /home/user/app
 
-# Install dependencies first (better Docker layer caching)
+# Install dependencies first (better Docker layer caching).
+# Install the CPU-ONLY torch from the PyTorch CPU index BEFORE the rest — the
+# default PyPI wheel ships CUDA (~2.5GB) and blows the free CPU Space's limits.
 COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

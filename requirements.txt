@@ -13,7 +13,9 @@ scikit-learn
 sympy
 # PRM floor: Skywork 1.5B runs in native PyTorch (custom arch can't ONNX-export);
 # int8 dynamic quantization is applied at load time on CPU.
-torch
+# NOTE: torch is installed separately in the Dockerfile from the CPU-only index
+# (the default CUDA wheel is ~2.5GB and breaks the free CPU Space). Do not add
+# `torch` here or pip will pull the CUDA build.
 transformers
 huggingface_hub
 accelerate
