@@ -8,8 +8,9 @@ small + CPU-friendly, the always-available floor scorer.
 
 Scoring follows Skywork's own inference recipe (model_utils/io_utils.py):
   problem + steps are tokenized with a "\n" step separator; the reward is read
-  at the LAST token of each step (flag==1); model(..., return_probs=True)
-  returns per-token probabilities. We return one score per step.
+  at the LAST token of each step (flag==1). The HF checkpoint exposes
+  Qwen2ForRewardModel (via auto_map), whose forward returns per-token value-head
+  logits in .logits — we sigmoid those and read one score per step.
 """
 import os
 from typing import List
@@ -102,17 +103,17 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
     mask = torch.ones_like(ids)
 
     with torch.no_grad():
-        out = _model(input_ids=ids, attention_mask=mask, return_probs=True)
-    # Skywork forward returns (..., rewards); rewards = per-token probabilities
-    if isinstance(out, (tuple, list)):
-        rewards = out[-1]
-    elif torch.is_tensor(out):
-        rewards = out
-    else:  # ModelOutput-like
-        rewards = getattr(out, "rewards", None)
-        if rewards is None:
-            rewards = getattr(out, "logits")
-    rewards = rewards[0]  # batch index 0
+        out = _model(input_ids=ids, attention_mask=mask)
+    # Qwen2ForRewardModel returns a SequenceClassifierOutputWithPast whose
+    # .logits are the value-head's per-token raw scores. Take batch 0, reduce a
+    # trailing singleton class dim, and sigmoid to map to a 0..1 reward.
+    logits = getattr(out, "logits", None)
+    if logits is None:
+        logits = out[0] if isinstance(out, (tuple, list)) else out
+    logits = logits[0]                       # [seq], [seq,1] or [seq,C]
+    if logits.dim() == 2:
+        logits = logits[:, 0] if logits.shape[-1] == 1 else logits[:, -1]
+    rewards = torch.sigmoid(logits)          # raw value-head score -> probability
 
     idxs = [i for i, f in enumerate(reward_flags) if f == 1]
     scores = [float(rewards[i]) for i in idxs]
