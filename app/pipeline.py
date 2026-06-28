@@ -23,7 +23,7 @@ ESCALATION_AGREEMENT_THRESHOLD = 0.5
 
 def _score_chains(problem: str, chains: List[Dict[str, Any]]) -> str:
     """Attach PRM scores/badges to each chain in place. Returns the verifier tag used."""
-    verifier = "1.5b-onnx"
+    verifier = "1.5b-torch"
     for chain in chains:
         steps = chain.get("steps", [])
         if not steps:

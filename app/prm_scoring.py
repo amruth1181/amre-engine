@@ -1,13 +1,13 @@
 """
 PRM Scoring with Failover (IMPLEMENTATION.md §3.3)
-Tries Colab 7B PRM first, falls back to local ONNX 1.5B floor.
+Tries Colab 7B PRM first, falls back to the local Skywork 1.5B PyTorch floor.
 """
 import os
 import time
 import requests
 from typing import List, Optional
 
-from . import prm_onnx
+from . import prm_local
 
 # ==================== COLAB PRM (7B, preferred) ====================
 COLAB_PRM_URL = os.environ.get("COLAB_PRM_URL", "")  # e.g. https://xxxx.trycloudflare.com
@@ -74,10 +74,10 @@ def score_steps(problem: str, steps: List[str]) -> dict:
             "scores": [float, ...],
             "badges": [str, ...],
             "weakest_step": int,
-            "verifier": "7b-research" | "1.5b-onnx"
+            "verifier": "7b-research" | "1.5b-torch"
         }
     """
-    verifier = "1.5b-onnx"  # default
+    verifier = "1.5b-torch"  # default
     scores = []
 
     # Try Colab 7B first
@@ -86,17 +86,17 @@ def score_steps(problem: str, steps: List[str]) -> dict:
             scores = colab.score_steps(problem, steps)
             verifier = "7b-research"
         except (requests.Timeout, requests.ConnectionError, Exception) as e:
-            print(f"⚠️ Colab PRM failed, falling back to ONNX: {e}")
+            print(f"⚠️ Colab PRM failed, falling back to local floor: {e}")
             colab.mark_down()
             scores = []
 
-    # Fallback to ONNX 1.5B
+    # Fallback to the local Skywork 1.5B floor
     if not scores:
-        scores = prm_onnx.score_steps(problem, steps)
-        verifier = "1.5b-onnx"
+        scores = prm_local.score_steps(problem, steps)
+        verifier = "1.5b-torch"
 
     # Compute badges and weakest step
-    badges = prm_onnx.get_step_badges(scores)
+    badges = prm_local.get_step_badges(scores)
     weakest_step = int(min(range(len(scores)), key=lambda i: scores[i])) if scores else 0
 
     return {
