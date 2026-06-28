@@ -136,18 +136,6 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
         vhead = (getattr(_model, "v_head", None) or getattr(_model, "value_head", None)
                  or getattr(_model, "score", None))
         per_token = vhead(hidden).squeeze(-1)[0]   # [seq] raw per-token reward
-        _raw = per_token.detach().float()
-        # pinpoint where NaN originates: input hidden states vs the value-head weights
-        _hid = hidden.detach().float()
-        _emb_w = _model.get_input_embeddings().weight
-        _vh_w = getattr(vhead, "summary", vhead)
-        _vh_w = getattr(_vh_w, "weight", None)
-        _dbg = (f"hidden={tuple(hidden.shape)} vhead_out={tuple(per_token.shape)} "
-                f"hidden_nan={bool(torch.isnan(_hid).any())} "
-                f"emb_w_nan={bool(torch.isnan(_emb_w).any())} "
-                f"vhead_w_nan={bool(torch.isnan(_vh_w).any()) if _vh_w is not None else 'NA'} "
-                f"raw_min={float(_raw.min()):.4f} raw_max={float(_raw.max()):.4f} "
-                f"nan_or_inf={bool(torch.isnan(_raw).any() or torch.isinf(_raw).any())}")
         # everything stays under no_grad; move to a plain python list of floats
         rewards = torch.sigmoid(per_token).detach().cpu().tolist()
 
@@ -157,9 +145,6 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
     for i in idxs:
         v = rewards[i] if i < len(rewards) else 0.5
         scores.append(min(1.0, max(0.0, v)) if math.isfinite(v) else 0.5)
-
-    print(f"[PRM-DEBUG] n_steps={len(steps)} seq_len={len(rewards)} idxs={idxs} "
-          f"{_dbg} scores={[round(s, 4) for s in scores]}")
 
     # one score per step; pad defensively if anything got truncated
     if len(scores) < len(steps):
