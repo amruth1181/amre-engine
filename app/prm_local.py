@@ -13,6 +13,7 @@ Scoring follows Skywork's own inference recipe (model_utils/io_utils.py):
   the value head (v_head) over all hidden states ourselves to get per-token
   rewards, sigmoid them, and read one score per step.
 """
+import math
 import os
 from typing import List
 
@@ -116,18 +117,23 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
         out = _model(input_ids=ids, attention_mask=mask,
                      use_cache=False, output_hidden_states=True)
 
-    hidden = out.hidden_states[-1] if getattr(out, "hidden_states", None) else None
-    if hidden is None:  # fallback: call the base transformer directly
-        base = getattr(_model, "model", None) or getattr(_model, "transformer", None)
-        hidden = base(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state
+        hidden = out.hidden_states[-1] if getattr(out, "hidden_states", None) else None
+        if hidden is None:  # fallback: call the base transformer directly
+            base = getattr(_model, "model", None) or getattr(_model, "transformer", None)
+            hidden = base(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state
 
-    vhead = (getattr(_model, "v_head", None) or getattr(_model, "value_head", None)
-             or getattr(_model, "score", None))
-    per_token = vhead(hidden).squeeze(-1)[0]   # [seq] raw per-token reward
-    rewards = torch.sigmoid(per_token)         # -> 0..1
+        vhead = (getattr(_model, "v_head", None) or getattr(_model, "value_head", None)
+                 or getattr(_model, "score", None))
+        per_token = vhead(hidden).squeeze(-1)[0]   # [seq] raw per-token reward
+        # everything stays under no_grad; move to a plain python list of floats
+        rewards = torch.sigmoid(per_token).detach().cpu().tolist()
 
     idxs = [i for i, f in enumerate(reward_flags) if f == 1]
-    scores = [float(rewards[i]) for i in idxs]
+    # sanitize: clamp to [0,1] and replace any NaN/inf so the JSON response is valid
+    scores = []
+    for i in idxs:
+        v = rewards[i] if i < len(rewards) else 0.5
+        scores.append(min(1.0, max(0.0, v)) if math.isfinite(v) else 0.5)
 
     # one score per step; pad defensively if anything got truncated
     if len(scores) < len(steps):
