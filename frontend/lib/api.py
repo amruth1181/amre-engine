@@ -37,15 +37,17 @@ def _get(path: str, timeout: int = 60) -> dict:
 
 # ---- auth (no token needed) ----
 def register(username: str, password: str) -> dict:
+    # 90s so a cold-start wake (free-tier Space napping) doesn't time out the first call
     r = requests.post(f"{engine_url()}/auth/register",
-                      json={"username": username, "password": password}, timeout=30)
+                      json={"username": username, "password": password}, timeout=90)
     r.raise_for_status()
     return r.json()
 
 
 def login(username: str, password: str) -> dict:
+    # 90s so a cold-start wake (free-tier Space napping) doesn't time out the first call
     r = requests.post(f"{engine_url()}/auth/login",
-                      json={"username": username, "password": password}, timeout=30)
+                      json={"username": username, "password": password}, timeout=90)
     r.raise_for_status()
     return r.json()
 
