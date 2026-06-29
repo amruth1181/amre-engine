@@ -3,6 +3,7 @@ Auth & users (IMPLEMENTATION.md §3.9).
 Passwords hashed with bcrypt; a signed JWT is the opaque session token.
 All data endpoints derive user_id from the token — never trust a client id.
 """
+import hashlib
 import os
 from datetime import datetime, timedelta
 
@@ -33,11 +34,20 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+def _is_bcrypt(pw_hash: str) -> bool:
+    return pw_hash.startswith(("$2a$", "$2b$", "$2y$"))
+
+
 def verify_password(password: str, pw_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(password.encode(), pw_hash.encode())
-    except (ValueError, TypeError):
-        return False
+    # Current accounts use bcrypt ($2b$...). Legacy accounts were stored as
+    # unsalted SHA-256 (64 hex chars) — verify those too so old logins work,
+    # and login() upgrades them to bcrypt on success.
+    if _is_bcrypt(pw_hash):
+        try:
+            return bcrypt.checkpw(password.encode(), pw_hash.encode())
+        except (ValueError, TypeError):
+            return False
+    return hashlib.sha256(password.encode()).hexdigest() == pw_hash
 
 
 def create_token(user_id: int) -> str:
@@ -91,7 +101,13 @@ def login(user: UserLogin):
     c = conn.cursor()
     c.execute("SELECT user_id, pw_hash FROM users WHERE username = ?", (user.username,))
     row = c.fetchone()
-    conn.close()
     if not row or not verify_password(user.password, row["pw_hash"]):
+        conn.close()
         raise HTTPException(401, "Invalid credentials")
+    # Upgrade-on-login: re-hash legacy SHA-256 passwords to bcrypt.
+    if not _is_bcrypt(row["pw_hash"]):
+        c.execute("UPDATE users SET pw_hash = ? WHERE user_id = ?",
+                  (hash_password(user.password), row["user_id"]))
+        conn.commit()
+    conn.close()
     return {"user_id": row["user_id"], "token": create_token(row["user_id"])}

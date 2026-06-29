@@ -23,7 +23,7 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def _post(path: str, payload: dict, timeout: int = 180) -> dict:
+def _post(path: str, payload: dict, timeout: int = 600) -> dict:
     r = requests.post(f"{engine_url()}{path}", json=payload, headers=_headers(), timeout=timeout)
     r.raise_for_status()
     return r.json()

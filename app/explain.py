@@ -63,8 +63,9 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
         scores = [0.5] * len(steps)
         badges = ["amber"] * len(steps)
 
-    # Engine solves for a verified solution
-    solved = await pipeline.run_solve(problem, mode="balanced")
+    # Engine solves for a verified solution (lightweight 3-chain verify route —
+    # check-my-work only needs a reliable comparison answer, not a full consensus)
+    solved = await pipeline.run_solve(problem, mode="verify")
     verified_answer = solved["answer"]
     verified_solution = solved["verified_solution"]
     confidence = solved["confidence"]
@@ -109,7 +110,8 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
 async def build_hints(problem: str, level: int) -> Dict[str, Any]:
     """Hint ladder by slicing the verified solution. level in 1..4."""
     level = max(1, min(4, int(level)))
-    solved = await pipeline.run_solve(problem, mode="balanced")
+    # Lightweight 3-chain verify route — the hint ladder only slices one verified solution
+    solved = await pipeline.run_solve(problem, mode="verify")
     steps: List[str] = solved.get("verified_steps", []) or []
     topic = topics_mod.classify_topic(problem)
 

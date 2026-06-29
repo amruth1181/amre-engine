@@ -4,6 +4,8 @@ __pycache__/
 *.db
 .DS_Store
 .env
+.streamlit/secrets.toml
+frontend/.streamlit/secrets.toml
 .venv/
 .venv_test/
 .cache/
