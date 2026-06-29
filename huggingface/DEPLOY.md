@@ -35,7 +35,7 @@ git push origin main
 ### Secrets (Space → Settings → Variables and secrets)
 | Key | Purpose |
 |---|---|
-| `OPENROUTER_API_KEY` | Policy model (Qwen2.5-7B) via OpenRouter |
+| `GEMINI_API_KEY` | Policy model (Gemini 2.0 Flash) via the Google Gemini API |
 | `JWT_SECRET` | Signing key for session tokens (don't ship the default) |
 | `COLAB_PRM_URL` | Optional — preferred 7B PRM tunnel; auto-fails over to the ONNX floor |
 | `PRM_MODEL_REPO` | Optional override; defaults to `Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B` (public) |

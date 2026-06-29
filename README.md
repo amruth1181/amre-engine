@@ -12,8 +12,8 @@ pinned: false
 
 FastAPI backend for the Adaptive Math Reasoning Engine (AMRE).
 
-The engine holds all logic + persistence. Stack: router → generation (OpenRouter
-Qwen2.5-7B) → PRM scoring (Colab 7B with a local Skywork-1.5B PyTorch floor) →
+The engine holds all logic + persistence. Stack: router → generation (Gemini
+2.0 Flash) → PRM scoring (Colab 7B with a local Skywork-1.5B PyTorch floor) →
 PRM-weighted consensus → isotonic calibration → per-user SQLite. See
 `IMPLEMENTATION.md`.
 

@@ -10,7 +10,7 @@ import os
 import tempfile
 
 os.environ["DB_PATH"] = os.path.join(tempfile.gettempdir(), "amre_pytest.db")
-os.environ["OPENROUTER_API_KEY"] = ""   # force generate.py's deterministic mock bank
+os.environ["GEMINI_API_KEY"] = ""   # force generate.py's deterministic mock bank
 os.environ.setdefault("CALIBRATION_PATH", "/nonexistent/calibration.pkl")  # force identity fallback
 
 import sys

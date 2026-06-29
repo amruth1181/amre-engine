@@ -5,9 +5,13 @@ import httpx
 from typing import List, Dict, Any, AsyncIterator
 from . import segment
 
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "qwen/qwen-2.5-7b-instruct"
+# Policy model now runs on Google's Gemini API via its OpenAI-compatible endpoint,
+# so the existing chat-completions payloads work unchanged (just a different base URL,
+# auth key and model name). Set GEMINI_API_KEY in the environment.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+DEFAULT_MODEL = "gemini-2.0-flash"
+FALLBACK_MODEL = "gemini-1.5-flash"
 
 async def generate_single_chain(
     client: httpx.AsyncClient,
@@ -17,7 +21,7 @@ async def generate_single_chain(
     """
     Generate a single solution path/chain for a given problem.
     """
-    if not OPENROUTER_API_KEY:
+    if not GEMINI_API_KEY:
         # If API key is missing, return a canned mock response to avoid crashing
         await asyncio.sleep(0.5)
         mock_text = (
@@ -30,13 +34,12 @@ async def generate_single_chain(
             "text": mock_text,
             "steps": segment.segment_steps(mock_text),
             "answer": "5",
-            "error": "OpenRouter API Key not set"
+            "error": "Gemini API Key not set"
         }
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/amruth1181/amre-engine"
     }
 
     payload = {
@@ -61,7 +64,7 @@ async def generate_single_chain(
 
     try:
         response = await client.post(
-            OPENROUTER_URL,
+            GEMINI_URL,
             json=payload,
             headers=headers,
             timeout=45.0
@@ -79,10 +82,10 @@ async def generate_single_chain(
             
         # Try fallback model if the primary fails or is rate limited
         elif response.status_code == 429 or response.status_code >= 500:
-            # Try free fallback
-            payload["model"] = "qwen/qwen-2.5-7b-instruct:free"
+            # Try a lighter Gemini model as fallback on rate-limit / server errors
+            payload["model"] = FALLBACK_MODEL
             response = await client.post(
-                OPENROUTER_URL,
+                GEMINI_URL,
                 json=payload,
                 headers=headers,
                 timeout=45.0
@@ -134,7 +137,7 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
     """Over-generate candidate quiz questions for a topic (IMPLEMENTATION.md §9.3).
     The engine verifies them afterwards; here we just produce raw candidates."""
     pretty = topic.replace("_", " ")
-    if not OPENROUTER_API_KEY:
+    if not GEMINI_API_KEY:
         # deterministic mock bank so the verified-quiz path still runs offline
         bank = [
             "Solve for x: 2x + 5 = 15",
@@ -151,9 +154,8 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
         return [bank[i % len(bank)] for i in range(n)]
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/amruth1181/amre-engine",
     }
     prompt = (
         f"Generate {n} distinct, self-contained {pretty} practice problems suitable for a "
@@ -171,7 +173,7 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
     }
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(OPENROUTER_URL, json=payload, headers=headers, timeout=45.0)
+            response = await client.post(GEMINI_URL, json=payload, headers=headers, timeout=45.0)
             if response.status_code == 200:
                 text = response.json()["choices"][0]["message"]["content"]
                 lines = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip() for ln in text.splitlines()]
@@ -183,15 +185,14 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
 
 async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> str:
     """
-    Query OpenRouter to explain why the student's step is wrong and show the correct way.
+    Query the Gemini API to explain why the student's step is wrong and show the correct way.
     """
-    if not OPENROUTER_API_KEY:
+    if not GEMINI_API_KEY:
         return f"Error detected at Step {error_step_idx+1}: '{steps[error_step_idx]}'. Please verify the arithmetic or algebraic operations in this step."
-        
+
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {GEMINI_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/amruth1181/amre-engine"
     }
     
     steps_formatted = "\n".join([f"Step {i+1}: {step}" for i, step in enumerate(steps)])
@@ -217,12 +218,12 @@ async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> 
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(OPENROUTER_URL, json=payload, headers=headers, timeout=30.0)
+            response = await client.post(GEMINI_URL, json=payload, headers=headers, timeout=30.0)
             if response.status_code == 200:
                 data = response.json()
                 return data["choices"][0]["message"]["content"]
             else:
-                return f"Error: OpenRouter returned status {response.status_code}. The error is likely in Step {error_step_idx+1}."
+                return f"Error: Gemini returned status {response.status_code}. The error is likely in Step {error_step_idx+1}."
     except Exception as e:
         return f"Could not generate tutor explanation: {e}. The verification flags Step {error_step_idx+1} as incorrect."
 
