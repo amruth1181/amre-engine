@@ -4,12 +4,15 @@ from typing import List, Tuple
 def segment_steps(text: str) -> List[str]:
     r"""
     Split the reasoning chain into individual steps.
-    Forces split on 'Step \d+:' patterns.
+    Splits on 'Step N:' markers — case-insensitive, tolerant of spacing
+    ('step 2 :'), alternate separators ('Step 2.'/'Step 2)'), and markers that
+    appear inline rather than at the start of a line.
     """
     # Find all step occurrences
-    pattern = r'(?:^|\n)Step\s+(\d+):'
+    pattern = r'(?i)\bstep\s*(\d+)\s*[:.\)]'
+    final_answer_re = r'(?i)final\s*answer\s*[:.]'
     parts = re.split(pattern, text)
-    
+
     steps = []
     if len(parts) > 1:
         # parts[0] is text before "Step 1:"
@@ -17,8 +20,8 @@ def segment_steps(text: str) -> List[str]:
         for i in range(2, len(parts), 2):
             step_text = parts[i].strip()
             # If the step text has "Final Answer:" in it, remove that part
-            if "Final Answer:" in step_text:
-                step_text = step_text.split("Final Answer:")[0].strip()
+            if re.search(final_answer_re, step_text):
+                step_text = re.split(final_answer_re, step_text)[0].strip()
             if step_text:
                 steps.append(step_text)
     else:

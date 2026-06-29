@@ -5,7 +5,7 @@ import httpx
 from typing import List, Dict, Any, AsyncIterator
 from . import segment
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # strip() guards against a trailing newline in the secret (illegal in an HTTP header)
 # Gemini's OpenAI-compatible endpoint: same request/response shape as before.
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 DEFAULT_MODEL = "gemini-2.5-flash"
