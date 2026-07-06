@@ -86,6 +86,46 @@ def selfrate(item_id: str, user_conf: float) -> dict:
     return _post("/selfrate", {"item_id": item_id, "user_conf": user_conf})
 
 
+# ---- spaced repetition ----
+def review_due() -> dict:
+    return _get("/review/due")
+
+
+def review_grade(card_id: int, quality: int) -> dict:
+    return _post("/review/grade", {"card_id": card_id, "quality": quality})
+
+
+# ---- teacher / classes ----
+def class_create(name: str) -> dict:
+    return _post("/class/create", {"name": name})
+
+
+def class_join(join_code: str) -> dict:
+    return _post("/class/join", {"join_code": join_code})
+
+
+def class_list() -> dict:
+    return _get("/class/list")
+
+
+def class_dashboard(class_id: int) -> dict:
+    return _get(f"/class/{class_id}/dashboard")
+
+
+def class_assign(class_id: int, topic: str, title: str = "") -> dict:
+    return _post(f"/class/{class_id}/assign", {"topic": topic, "title": title})
+
+
+# ---- knowledge graph ----
+def knowledge_graph() -> dict:
+    return _get("/knowledge-graph")
+
+
+# ---- gamification ----
+def gamify() -> dict:
+    return _get("/gamify")
+
+
 # ---- per-user reads ----
 def history() -> dict:
     return _get("/history")
