@@ -15,7 +15,7 @@ Scoring follows Skywork's own inference recipe (model_utils/io_utils.py):
 """
 import math
 import os
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
@@ -28,6 +28,13 @@ STEP_TOKEN = "\n"
 # fp32 is stable. Set PRM_QUANTIZE=1 to opt back in if a future torch fixes it.
 QUANTIZE = os.environ.get("PRM_QUANTIZE", "0") in ("1", "true", "True")
 MAX_TOKENS = int(os.environ.get("PRM_MAX_TOKENS", "4096"))
+# bf16 matmul has no hardware acceleration on x86 CPUs (HF Spaces) or Apple
+# Silicon and is often 2-4x slower than fp32. Default to fp32; the NaN that
+# motivated bf16 came from *mixed* precision, which we now avoid by casting the
+# whole model to one dtype consistently. Set PRM_DTYPE=bf16 to opt back in.
+PRM_DTYPE = os.environ.get("PRM_DTYPE", "fp32").lower()
+# rows per PRM forward pass — bounds activation memory when batch-scoring N chains
+PRM_BATCH = int(os.environ.get("PRM_BATCH", "8"))
 
 # lazy globals
 _model = None
@@ -54,7 +61,7 @@ def _load_model():
     # fp32 left some internal buffers in bf16 while activations were fp32 -> mixed
     # precision -> NaN hidden states (every step scored 0.5). bf16 keeps everything
     # consistent and halves the RAM. Eager attention avoids the SDPA-on-CPU path.
-    load_dtype = torch.bfloat16
+    load_dtype = torch.bfloat16 if PRM_DTYPE in ("bf16", "bfloat16") else torch.float32
     try:
         model = AutoModel.from_pretrained(
             MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
@@ -66,6 +73,11 @@ def _load_model():
             MODEL_REPO, trust_remote_code=True, cache_dir=cache_dir,
             torch_dtype=load_dtype,
         ).eval()
+
+    # Cast ALL params + buffers to one dtype. Forcing only activations to fp32
+    # while buffers stayed bf16 previously produced NaN hidden states (every step
+    # scored 0.5). Casting the whole model keeps precision consistent.
+    model = model.to(load_dtype)
 
     if QUANTIZE:
         try:
@@ -150,6 +162,78 @@ def score_steps(problem: str, steps: List[str]) -> List[float]:
     if len(scores) < len(steps):
         scores += [0.5] * (len(steps) - len(scores))
     return scores[: len(steps)]
+
+
+def score_steps_batch(items: List[Tuple[str, List[str]]]) -> List[List[float]]:
+    """Score several (problem, steps) items in ONE padded forward pass per chunk.
+
+    Numerically identical to calling score_steps() on each item: causal attention +
+    right-padding means the padded tail tokens never influence real positions, and
+    each token's reward is read at its own step-end flag. But on CPU this is far
+    cheaper than N separate passes (one BLAS dispatch, one graph). Chunked to
+    PRM_BATCH rows to bound activation memory on small Spaces.
+    """
+    if not items:
+        return []
+    _load_model()
+    import torch
+
+    out: List[List[float]] = []
+    for start in range(0, len(items), PRM_BATCH):
+        chunk = items[start:start + PRM_BATCH]
+
+        # build (input_ids, reward_flags, n_steps) per row; empty rows -> no steps
+        built = []
+        for problem, steps in chunk:
+            if not steps:
+                built.append(([], [], 0))
+                continue
+            ids, flags = _build_inputs(problem, steps)
+            built.append((ids, flags, len(steps)))
+
+        max_len = max((len(ids) for ids, _, _ in built), default=0)
+        if max_len == 0:
+            out.extend([[] for _ in chunk])
+            continue
+
+        pad_id = _tokenizer.pad_token_id
+        if pad_id is None:
+            pad_id = _tokenizer.eos_token_id or 0
+
+        batch_ids, batch_mask = [], []
+        for ids, _flags, _n in built:
+            padlen = max_len - len(ids)
+            batch_ids.append(ids + [pad_id] * padlen)          # right-pad
+            batch_mask.append([1] * len(ids) + [0] * padlen)   # mask out the pads
+        ids_t = torch.tensor(batch_ids, dtype=torch.long)
+        mask_t = torch.tensor(batch_mask, dtype=torch.long)
+
+        with torch.no_grad():
+            model_out = _model(input_ids=ids_t, attention_mask=mask_t,
+                               use_cache=False, output_hidden_states=True)
+            hidden = model_out.hidden_states[-1] if getattr(model_out, "hidden_states", None) else None
+            if hidden is None:  # fallback: call the base transformer directly
+                base = getattr(_model, "model", None) or getattr(_model, "transformer", None)
+                hidden = base(input_ids=ids_t, attention_mask=mask_t, use_cache=False).last_hidden_state
+            vhead = (getattr(_model, "v_head", None) or getattr(_model, "value_head", None)
+                     or getattr(_model, "score", None))
+            per_token = torch.sigmoid(vhead(hidden).squeeze(-1))  # [batch, seq]
+            per_token = per_token.detach().cpu().tolist()
+
+        for row, (ids, flags, n_steps) in enumerate(built):
+            if not ids:
+                out.append([])
+                continue
+            rewards = per_token[row]
+            idxs = [i for i, f in enumerate(flags) if f == 1]
+            scores = []
+            for i in idxs:
+                v = rewards[i] if i < len(rewards) else 0.5
+                scores.append(min(1.0, max(0.0, v)) if math.isfinite(v) else 0.5)
+            if len(scores) < n_steps:
+                scores += [0.5] * (n_steps - len(scores))
+            out.append(scores[:n_steps])
+    return out
 
 
 def get_step_badges(scores: List[float]) -> List[str]:
