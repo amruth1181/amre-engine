@@ -47,7 +47,7 @@ problem = st.text_area("Problem", height=110, key="solve_problem",
 mode_label = st.radio("Mode", list(MODES.keys()), horizontal=True)
 use_prm = st.toggle(
     "🔬 Verify steps with the PRM",
-    value=True,
+    value=False,  # default OFF for speed; flip ON to showcase per-step verification
     help="ON: PRM scores each step and weights the vote (the test-time-compute demo) — slower on CPU. "
          "OFF: faster — just the answer + explanation with a plain majority vote (no per-step scores). "
          "Fast/greedy mode gains nothing from the PRM, so turn it off there.",
