@@ -10,8 +10,9 @@ Check-my-work:
 Hint ladder: pure slicing of the already-computed verified solution.
   L1 concept · L2 strategy · L3 first correct step · L4 full solution.
 """
+import asyncio
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from . import segment
 from . import prm_scoring
@@ -40,8 +41,24 @@ def classify_error_type(error_step_text: str, explanation: str) -> str:
     return "arithmetic"
 
 
-async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
-    """Localize the student's error and explain it, grounded in a verified solution."""
+def _score_user_steps(problem: str, steps: List[str]):
+    """Blocking PRM scoring of the student's steps. Runs in a worker thread so its
+    CPU pass overlaps the verification solve's network I/O (torch releases the GIL
+    during matmul, so this genuinely runs concurrently)."""
+    try:
+        prm = prm_scoring.score_steps(problem, steps)
+        return prm["scores"], prm["badges"]
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ check_work PRM failed: {e}")
+        return [0.5] * len(steps), ["amber"] * len(steps)
+
+
+async def check_work(problem: str, solution_text: str,
+                     known_answer: Optional[str] = None) -> Dict[str, Any]:
+    """Localize the student's error and explain it, grounded in a verified answer.
+
+    known_answer: when the correct answer is already known (e.g. the quiz key), we
+    skip the verification solve entirely and compare against it."""
     steps = segment.segment_steps(solution_text)
     if not steps:
         # treat the whole thing as one step rather than failing outright
@@ -54,21 +71,20 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
             "is_correct": False, "error_type": None,
         }
 
-    # PRM-score the student's steps
-    try:
-        prm = prm_scoring.score_steps(problem, steps)
-        scores, badges = prm["scores"], prm["badges"]
-    except Exception as e:  # noqa: BLE001
-        print(f"⚠️ check_work PRM failed: {e}")
-        scores = [0.5] * len(steps)
-        badges = ["amber"] * len(steps)
-
-    # Engine solves for a verified solution (lightweight 3-chain verify route —
-    # check-my-work only needs a reliable comparison answer, not a full consensus)
-    solved = await pipeline.run_solve(problem, mode="verify")
-    verified_answer = solved["answer"]
-    verified_solution = solved["verified_solution"]
-    confidence = solved["confidence"]
+    # Score the student's steps (PRM). When we also need a verified answer, run the
+    # greedy solve CONCURRENTLY so the PRM pass hides behind the LLM call.
+    if known_answer is not None:
+        scores, badges = await asyncio.to_thread(_score_user_steps, problem, steps)
+        verified_answer, verified_solution, confidence, verified_steps = known_answer, "", 1.0, []
+    else:
+        (scores, badges), solved = await asyncio.gather(
+            asyncio.to_thread(_score_user_steps, problem, steps),
+            pipeline.run_solve(problem, mode="verify", score_chains=False),
+        )
+        verified_answer = solved["answer"]
+        verified_solution = solved["verified_solution"]
+        verified_steps = solved.get("verified_steps", [])
+        confidence = solved["confidence"]
 
     # Did the student arrive at the verified answer?
     user_answer = segment.extract_answer(solution_text)
@@ -83,6 +99,7 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
             "error_step": None,
             "explanation": "Your answer matches the verified solution. Nice work — your reasoning checks out.",
             "verified_solution": verified_solution, "verified_answer": verified_answer,
+            "verified_steps": verified_steps,
             "confidence": confidence, "is_correct": True, "error_type": None,
         }
 
@@ -100,6 +117,7 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
         "explanation": explanation,
         "verified_solution": verified_solution,
         "verified_answer": verified_answer,
+        "verified_steps": verified_steps,
         "confidence": confidence,
         "is_correct": False,
         "error_type": error_type,
@@ -110,8 +128,8 @@ async def check_work(problem: str, solution_text: str) -> Dict[str, Any]:
 async def build_hints(problem: str, level: int) -> Dict[str, Any]:
     """Hint ladder by slicing the verified solution. level in 1..4."""
     level = max(1, min(4, int(level)))
-    # Lightweight 3-chain verify route — the hint ladder only slices one verified solution
-    solved = await pipeline.run_solve(problem, mode="verify")
+    # Greedy verify route — the hint ladder only slices one verified solution
+    solved = await pipeline.run_solve(problem, mode="verify", score_chains=False)
     steps: List[str] = solved.get("verified_steps", []) or []
     topic = topics_mod.classify_topic(problem)
 
