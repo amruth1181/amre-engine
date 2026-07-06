@@ -1,3 +1,14 @@
-streamlit
+# Frontend (Streamlit) dependencies ONLY — keep this file in frontend/.
+#
+# Streamlit Community Cloud gives a requirements.txt in the app's entrypoint
+# directory PRECEDENCE over the repo root. Because this file exists next to
+# frontend/Home.py, the frontend deploy installs ONLY these packages -- the heavy
+# root requirements.txt (torch / fastapi / transformers, for the engine) is never
+# installed. Do NOT delete this file.
+#
+# Streamlit Cloud deploy config:
+#   Main file path : frontend/Home.py
+#   Secret         : ENGINE_URL = "https://amruth1181-amre-engine-v3.hf.space"
+streamlit>=1.30
 requests
 pandas
