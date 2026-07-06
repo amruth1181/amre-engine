@@ -90,3 +90,58 @@ def mini_lesson(topic: str) -> str:
 def pretty(topic: str) -> str:
     """Human-readable topic label."""
     return topic.replace("_", " ").title()
+
+
+# ============ Topic knowledge graph (feature 1.5) ============
+# Prerequisite DAG: topic -> the topics you should understand first. Arithmetic is
+# the root; calculus sits at the top. Drives "fix these foundations first".
+PREREQUISITES: Dict[str, List[str]] = {
+    "arithmetic": [],
+    "fractions_ratios": ["arithmetic"],
+    "word_problems": ["arithmetic"],
+    "number_theory": ["arithmetic"],
+    "linear_equations": ["arithmetic", "fractions_ratios"],
+    "inequalities": ["linear_equations"],
+    "systems_of_equations": ["linear_equations"],
+    "exponents_logs": ["arithmetic", "fractions_ratios"],
+    "quadratics": ["linear_equations", "exponents_logs"],
+    "polynomials": ["quadratics"],
+    "geometry": ["arithmetic", "fractions_ratios"],
+    "trigonometry": ["geometry", "quadratics"],
+    "sequences_series": ["linear_equations", "exponents_logs"],
+    "combinatorics": ["arithmetic", "fractions_ratios"],
+    "probability": ["fractions_ratios", "combinatorics"],
+    "statistics": ["arithmetic", "fractions_ratios"],
+    "linear_algebra": ["systems_of_equations"],
+    "calculus_limits": ["polynomials", "trigonometry", "exponents_logs"],
+    "calculus_derivatives": ["calculus_limits"],
+    "calculus_integrals": ["calculus_derivatives"],
+}
+
+
+def _ancestors(topic: str, seen=None) -> set:
+    """All prerequisite topics (transitively) required for `topic`."""
+    seen = seen if seen is not None else set()
+    for p in PREREQUISITES.get(topic, []):
+        if p not in seen:
+            seen.add(p)
+            _ancestors(p, seen)
+    return seen
+
+
+def recommend_foundations(weak_topics: List[str], limit: int = 5) -> List[str]:
+    """Given the student's weak topics, recommend which FOUNDATIONS to fix first:
+    prerequisites of their weak topics that are themselves weak (so drilling the
+    hard topic isn't wasted), else the direct prerequisites to shore up the base."""
+    weak = set(weak_topics)
+    rec: List[str] = []
+    for t in weak_topics:
+        for a in _ancestors(t):
+            if a in weak and a not in rec:
+                rec.append(a)
+    if not rec:  # no weak ancestors -> suggest direct prerequisites
+        for t in weak_topics:
+            for p in PREREQUISITES.get(t, []):
+                if p not in rec:
+                    rec.append(p)
+    return rec[:limit]
