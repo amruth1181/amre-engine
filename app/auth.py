@@ -13,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from . import db
+from . import gamify
 
 SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-prod")
 ALGORITHM = "HS256"
@@ -110,4 +111,8 @@ def login(user: UserLogin):
                   (hash_password(user.password), row["user_id"]))
         conn.commit()
     conn.close()
+    try:
+        gamify.update_streak(row["user_id"])  # daily-login streak
+    except Exception:  # noqa: BLE001 — gamification must never block login
+        pass
     return {"user_id": row["user_id"], "token": create_token(row["user_id"])}

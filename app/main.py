@@ -24,6 +24,9 @@ from . import journal as journal_mod
 from . import ocr as ocr_mod
 from . import consensus
 from . import studysheet as studysheet_mod
+from . import gamify
+from . import srs
+from . import classes as classes_mod
 
 load_dotenv()
 
@@ -41,6 +44,14 @@ def _startup():
     db.init_db()
     db.migrate_legacy()
     db.init_db()  # ensure all tables exist post-migration
+
+
+def _try_gamify(fn):
+    """Run a gamification side-effect, swallowing errors so it never breaks a response."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        print(f"gamify hook failed: {e}")
 
 
 # ==================== MODELS ====================
@@ -82,6 +93,24 @@ class SelfRateRequest(BaseModel):
     user_conf: float
 
 
+class ReviewGradeRequest(BaseModel):
+    card_id: int
+    quality: int  # SM-2 recall quality 0..5
+
+
+class ClassCreateRequest(BaseModel):
+    name: str
+
+
+class ClassJoinRequest(BaseModel):
+    join_code: str
+
+
+class AssignRequest(BaseModel):
+    topic: str
+    title: str = ""
+
+
 # ==================== HEALTH ====================
 @app.get("/health")
 def health():
@@ -115,6 +144,8 @@ async def solve(request: SolveRequest, authorization: str = Header(None)):
     conn.commit()
     conn.close()
 
+    _try_gamify(lambda: gamify.award_xp(user_id, 5, "solve"))
+
     return {
         "answer": result["answer"],
         "confidence": result["confidence"],
@@ -136,18 +167,25 @@ async def solve(request: SolveRequest, authorization: str = Header(None)):
 @app.post("/checkwork")
 async def checkwork(request: CheckRequest, authorization: str = Header(None)):
     user_id = auth.require_user(authorization)
+    t0 = time.time()
     result = await explain.check_work(request.problem, request.solution_text)
+    result["latency_ms"] = round((time.time() - t0) * 1000, 1)
 
     # log a mistake to the user's journal when an error was found
     if not result.get("is_correct") and result.get("error_step"):
-        journal_mod.log_mistake(
+        _topic = result.get("topic") or topics_mod.classify_topic(request.problem)
+        jid = journal_mod.log_mistake(
             user_id=user_id,
             problem=request.problem,
-            topic=result.get("topic") or topics_mod.classify_topic(request.problem),
+            topic=_topic,
             error_step=result["error_step"],
             error_type=result.get("error_type") or "arithmetic",
             explanation=result.get("explanation", ""),
         )
+        # seed a spaced-repetition card for this missed problem
+        _try_gamify(lambda: srs.seed_card(user_id, request.problem, _topic, jid))
+    elif result.get("is_correct"):
+        _try_gamify(lambda: gamify.award_xp(user_id, 20, "correct check-my-work"))
     return result
 
 
@@ -209,22 +247,26 @@ async def quiz_grade(request: QuizGradeRequest, authorization: str = Header(None
 
     out = {"correct": correct}
     if not correct:
-        # run the full check-my-work path to localize + explain the error
-        result = await explain.check_work(request.question, request.user_solution)
+        # localize + explain the error; the quiz key is the verified answer, so
+        # check_work can skip its own verification solve.
+        result = await explain.check_work(request.question, request.user_solution,
+                                          known_answer=request.verified_answer)
         # check_work compares against its own verified answer; trust the quiz key for "correct"
         correct = result.get("is_correct", False)
         out["correct"] = correct
         if not correct:
             out["error_step"] = result.get("error_step")
             out["explanation"] = result.get("explanation")
-            journal_mod.log_mistake(
+            _qtopic = topics_mod.classify_topic(request.question)
+            _qjid = journal_mod.log_mistake(
                 user_id=user_id,
                 problem=request.question,
-                topic=topics_mod.classify_topic(request.question),
+                topic=_qtopic,
                 error_step=result.get("error_step") or 0,
                 error_type=result.get("error_type") or "arithmetic",
                 explanation=result.get("explanation", ""),
             )
+            _try_gamify(lambda: srs.seed_card(user_id, request.question, _qtopic, _qjid))
 
     # record grade against the most recent matching quiz item, if present
     conn = db.get_db()
@@ -237,6 +279,8 @@ async def quiz_grade(request: QuizGradeRequest, authorization: str = Header(None
     )
     conn.commit()
     conn.close()
+    if out["correct"]:
+        _try_gamify(lambda: gamify.award_xp(user_id, 15, "correct quiz"))
     return out
 
 
@@ -264,6 +308,70 @@ def selfrate(request: SelfRateRequest, authorization: str = Header(None)):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+# ==================== SPACED REPETITION (SM-2) ====================
+@app.get("/review/due")
+def review_due(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return {"cards": srs.due_cards(user_id)}
+
+
+@app.post("/review/grade")
+def review_grade(request: ReviewGradeRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return srs.grade(user_id, request.card_id, request.quality)
+
+
+# ==================== TEACHER / CLASSES ====================
+@app.post("/class/create")
+def class_create(request: ClassCreateRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return classes_mod.create_class(user_id, request.name)
+
+
+@app.post("/class/join")
+def class_join(request: ClassJoinRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return classes_mod.join_class(user_id, request.join_code)
+
+
+@app.get("/class/list")
+def class_list(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return classes_mod.list_classes(user_id)
+
+
+@app.get("/class/{class_id}/dashboard")
+def class_dashboard(class_id: int, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return classes_mod.dashboard(user_id, class_id)
+
+
+@app.post("/class/{class_id}/assign")
+def class_assign(class_id: int, request: AssignRequest, authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return classes_mod.assign(user_id, class_id, request.topic, request.title)
+
+
+# ==================== KNOWLEDGE GRAPH (learning path) ====================
+@app.get("/knowledge-graph")
+def knowledge_graph(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    prof = journal_mod.profile(user_id)
+    weak = prof.get("weakest_topics", [])
+    return {
+        "graph": topics_mod.PREREQUISITES,
+        "weak_topics": weak,
+        "recommended_foundations": topics_mod.recommend_foundations(weak),
+    }
+
+
+# ==================== GAMIFICATION (streak / XP / badges) ====================
+@app.get("/gamify")
+def get_gamify(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return gamify.stats(user_id)
 
 
 # ==================== HISTORY ====================
