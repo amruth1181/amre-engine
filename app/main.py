@@ -58,6 +58,7 @@ def _try_gamify(fn):
 class SolveRequest(BaseModel):
     problem: str
     mode: str = "auto"
+    use_prm: bool = True  # False = skip PRM scoring (faster; plain majority vote, no per-step scores)
 
 
 class CheckRequest(BaseModel):
@@ -128,7 +129,7 @@ async def solve(request: SolveRequest, authorization: str = Header(None)):
     user_id = auth.require_user(authorization)
     t0 = time.time()
 
-    result = await pipeline.run_solve(request.problem, request.mode)
+    result = await pipeline.run_solve(request.problem, request.mode, score_chains=request.use_prm)
     latency_ms = round((time.time() - t0) * 1000, 1)
 
     # persist to per-user history

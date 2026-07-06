@@ -45,6 +45,14 @@ with st.expander("📷 Scan a problem from an image (OCR)"):
 problem = st.text_area("Problem", height=110, key="solve_problem",
                        placeholder="Example: Solve for x: 2x + 5 = 15")
 mode_label = st.radio("Mode", list(MODES.keys()), horizontal=True)
+use_prm = st.toggle(
+    "🔬 Verify steps with the PRM",
+    value=True,
+    help="ON: PRM scores each step and weights the vote (the test-time-compute demo) — slower on CPU. "
+         "OFF: faster — just the answer + explanation with a plain majority vote (no per-step scores). "
+         "Fast/greedy mode gains nothing from the PRM, so turn it off there.",
+)
+st.caption("✅ PRM on = per-step confidence + weighted vote (slower) · ⚡ PRM off = faster, answer + explanation only")
 
 if st.button("🚀 Solve", type="primary"):
     if not problem.strip():
@@ -53,8 +61,8 @@ if st.button("🚀 Solve", type="primary"):
 
     try:
         with st.status("Solving…", expanded=True) as status:
-            status.write("Routing → generating samples…")
-            res = api.solve(problem, MODES[mode_label])
+            status.write("Routing → generating samples…" + ("" if use_prm else " (PRM off — fast)"))
+            res = api.solve(problem, MODES[mode_label], use_prm)
             status.write(
                 f"Generated {res['n_used']} samples · scored steps · voted"
                 + (" · escalated 🔼" if res.get("escalated") else "")
@@ -72,8 +80,10 @@ if st.button("🚀 Solve", type="primary"):
     c3.metric("Route", f"{res.get('route', '?')} · N={res.get('n_used', '?')}")
 
     meta = []
-    if res.get("verifier"):
+    if res.get("verifier") and res["verifier"] != "unscored":
         meta.append(f"scored by **{res['verifier']}**")
+    elif not use_prm:
+        meta.append("PRM off · plain majority vote")
     if res.get("agreement") is not None:
         meta.append(f"agreement {res['agreement'] * 100:.0f}%")
     if res.get("advisory"):
@@ -89,7 +99,7 @@ if st.button("🚀 Solve", type="primary"):
         rep = chains[wc] if wc < len(chains) else chains[0]
         st.markdown("### ✅ Verified solution")
         render.render_solution(rep.get("steps", []), rep.get("scores", []), rep.get("badges", []))
-        if rep.get("steps"):
+        if rep.get("steps") and rep.get("scores"):
             st.caption(f"Weakest link: step {weak.get('step', 0) + 1}")
 
         with st.expander(f"See all {len(chains)} candidate chains"):

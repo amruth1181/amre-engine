@@ -77,7 +77,8 @@ async def run_solve(problem: str, mode: str = "auto", score_chains: bool = True)
         extra = target - rt.n
         if extra > 0:
             more = await generate.generate_chains(problem, extra, rt.temperature)
-            _score_chains(problem, more)
+            if score_chains:
+                _score_chains(problem, more)
             chains.extend(more)
             best_answer, agreement, tally = consensus.run_consensus(chains)
             escalated = True

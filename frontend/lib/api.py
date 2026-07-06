@@ -53,8 +53,8 @@ def login(username: str, password: str) -> dict:
 
 
 # ---- solve & learning loop ----
-def solve(problem: str, mode: str = "auto") -> dict:
-    return _post("/solve", {"problem": problem, "mode": mode})
+def solve(problem: str, mode: str = "auto", use_prm: bool = True) -> dict:
+    return _post("/solve", {"problem": problem, "mode": mode, "use_prm": use_prm})
 
 
 def checkwork(problem: str, solution_text: str) -> dict:
