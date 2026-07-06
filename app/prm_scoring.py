@@ -105,3 +105,33 @@ def score_steps(problem: str, steps: List[str]) -> dict:
         "weakest_step": weakest_step,
         "verifier": verifier,
     }
+
+
+def score_steps_batch(problem: str, steps_list: List[List[str]]) -> dict:
+    """Batch-score several step-lists for the SAME problem in one PRM pass (floor).
+
+    Local floor scores all chains in a single forward pass (fast on CPU). If the
+    Colab 7B is healthy it's already GPU-fast, so we keep it per-item there.
+
+    Returns {"scores": [[...], ...], "badges": [[...], ...], "verifier": tag}.
+    """
+    verifier = "1.5b-torch"
+    scores_list: List[List[float]] = []
+
+    # Prefer Colab 7B when healthy (GPU — latency isn't the concern there).
+    if colab.healthy():
+        try:
+            scores_list = [colab.score_steps(problem, s) if s else [] for s in steps_list]
+            verifier = "7b-research"
+        except (requests.Timeout, requests.ConnectionError, Exception) as e:
+            print(f"⚠️ Colab PRM batch failed, falling back to local floor: {e}")
+            colab.mark_down()
+            scores_list = []
+
+    # Local floor: ONE batched forward pass over every chain.
+    if not scores_list:
+        scores_list = prm_local.score_steps_batch([(problem, s) for s in steps_list])
+        verifier = "1.5b-torch"
+
+    badges_list = [prm_local.get_step_badges(s) for s in scores_list]
+    return {"scores": scores_list, "badges": badges_list, "verifier": verifier}

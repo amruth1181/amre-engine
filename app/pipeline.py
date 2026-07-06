@@ -22,23 +22,25 @@ ESCALATION_AGREEMENT_THRESHOLD = 0.5
 
 
 def _score_chains(problem: str, chains: List[Dict[str, Any]]) -> str:
-    """Attach PRM scores/badges to each chain in place. Returns the verifier tag used."""
-    verifier = "1.5b-torch"
-    for chain in chains:
-        steps = chain.get("steps", [])
-        if not steps:
+    """Attach PRM scores/badges to every chain in place, in ONE batched PRM pass.
+    Returns the verifier tag used."""
+    steps_list = [chain.get("steps", []) for chain in chains]
+    if not any(steps_list):
+        for chain in chains:
             chain["scores"], chain["badges"] = [], []
-            continue
-        try:
-            prm = prm_scoring.score_steps(problem, steps)
-            chain["scores"] = prm["scores"]
-            chain["badges"] = prm["badges"]
-            verifier = prm.get("verifier", verifier)
-        except Exception as e:  # noqa: BLE001
-            print(f"⚠️ PRM scoring failed for a chain: {e}")
-            chain["scores"] = [0.5] * len(steps)
-            chain["badges"] = ["amber"] * len(steps)
-    return verifier
+        return "1.5b-torch"
+    try:
+        prm = prm_scoring.score_steps_batch(problem, steps_list)
+        for chain, sc, bd in zip(chains, prm["scores"], prm["badges"]):
+            chain["scores"], chain["badges"] = sc, bd
+        return prm.get("verifier", "1.5b-torch")
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ PRM batch scoring failed: {e}")
+        for chain in chains:
+            n = len(chain.get("steps", []))
+            chain["scores"] = [0.5] * n
+            chain["badges"] = ["amber"] * n
+        return "1.5b-torch"
 
 
 def _weakest_link(chains: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -53,13 +55,18 @@ def _weakest_link(chains: List[Dict[str, Any]]) -> Dict[str, int]:
     return weakest
 
 
-async def run_solve(problem: str, mode: str = "auto") -> Dict[str, Any]:
+async def run_solve(problem: str, mode: str = "auto", score_chains: bool = True) -> Dict[str, Any]:
     """Full solve. Returns answer, calibrated confidence, route, chains, escalation flag,
-    weakest step, verifier tag, and the representative verified solution text."""
+    weakest step, verifier tag, and the representative verified solution text.
+
+    score_chains=False skips PRM-scoring the generated chains — used by the greedy
+    'verify' route (check-my-work / hints), where a single chain is the answer
+    regardless of its PRM score, so scoring it would be dead work. Consensus and
+    the representative-chain pick both degrade gracefully to unscored chains."""
     rt = router_mod.route(problem, mode)
 
     chains = await generate.generate_chains(problem, rt.n, rt.temperature)
-    verifier = _score_chains(problem, chains)
+    verifier = _score_chains(problem, chains) if score_chains else "unscored"
 
     best_answer, agreement, tally = consensus.run_consensus(chains)
     escalated = False

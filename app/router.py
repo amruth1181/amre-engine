@@ -69,10 +69,11 @@ def route(problem: str, mode: str = "auto") -> Route:
     if mode == "balanced":
         return Route("prm_weighted_vote", 8, 0.8)
     if mode == "verify":
-        # Lightweight solve for check-my-work / hints: we only need ONE reliable
-        # comparison answer, not a high-stakes consensus. 3 chains keeps a real
-        # majority vote at a fraction of the cost.
-        return Route("prm_weighted_vote", 3, 0.8)
+        # Check-my-work / hints need ONE reliable comparison answer, not a
+        # consensus. Greedy (temperature 0, N=1) is the fastest option and is
+        # DETERMINISTIC — a student re-checking the same work gets the same
+        # verdict. The PRM localizes the student's error step separately.
+        return Route("greedy", 1, 0.0)
     if mode == "careful":
         return Route("prm_weighted_vote", min(32, N_CAP_CAREFUL), 0.8)
 
