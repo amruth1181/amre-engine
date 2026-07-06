@@ -23,6 +23,10 @@ sympy
 transformers==4.44.2
 huggingface_hub
 accelerate
+# Persistent DB: Turso/libSQL (SQLite-compatible) so per-user data survives Space
+# restarts — the free Space has no persistent disk. Enabled when TURSO_DATABASE_URL
+# is set (app/db.py); falls back to local sqlite3 otherwise.
+libsql-experimental
 # OCR (§3.8) — Pillow stays (tiny). pix2tex is DISABLED: it pulls torchvision +
 # opencv and breaks the free CPU Space build. OCR is the first cut item (§7); the
 # /ocr endpoint already returns 503 gracefully when pix2tex is absent. Re-enable
