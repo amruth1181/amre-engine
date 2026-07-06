@@ -1,12 +1,15 @@
 """
 Verified quiz generator (IMPLEMENTATION.md §9.3) — the unique piece.
 
-LLM over-generates candidate questions -> the engine solves each with the
-self-consistency pipeline -> keep only questions whose solution is confident
-(agreement >= AGREEMENT_MIN) -> ship up to SHIP_COUNT. Self-consistency is
-used here as *content QC*: we only quiz on problems the engine can confidently
-answer, and the verified answer becomes the grading key.
+LLM over-generates candidate questions -> we sample a few reasoning chains per
+candidate and keep only questions whose answer is *self-consistent* (>= AGREEMENT_MIN
+of the chains agree) -> ship up to SHIP_COUNT. The agreeing answer becomes the
+grading key.
 
+Self-consistency here is *content QC* — we only quiz on problems the engine
+answers confidently. Crucially this needs the ANSWER agreement, not PRM step
+scores, so we skip the (CPU-heavy) verifier entirely: on the free CPU Space,
+PRM-scoring 12 candidates x 8 chains was ~96 forward passes and timed out.
 Cached by topic to avoid re-paying generation cost.
 """
 import asyncio
@@ -14,25 +17,28 @@ import time
 from typing import Dict, Any, List
 
 from . import generate
-from . import pipeline
+from . import consensus
 
-OVERGEN = 12          # how many candidates to author
-SHIP_COUNT = 5        # how many verified questions to ship
-AGREEMENT_MIN = 0.75  # self-consistency threshold for "verified"
-SOLVE_MODE = "balanced"
+OVERGEN = 8            # candidates to author (ONE LLM call authors all of them)
+SHIP_COUNT = 5         # verified questions to ship
+QUIZ_N = 5             # self-consistency chains per candidate (no PRM — QC only)
+AGREEMENT_MIN = 0.6    # keep a question if >= 60% of its chains agree on the answer
+QUIZ_CONCURRENCY = 6   # cap concurrent candidate-solves so we don't storm Groq's rate limit
 
 _cache: Dict[str, Dict[str, Any]] = {}
 _CACHE_TTL = 60 * 60  # 1h
 
 
-async def _verify_question(question: str) -> Dict[str, Any]:
-    solved = await pipeline.run_solve(question, mode=SOLVE_MODE)
-    return {
-        "question": question,
-        "verified_answer": solved["answer"],
-        "agreement": solved["agreement"],
-        "confidence": solved["confidence"],
-    }
+async def _verify_question(question: str, sem: asyncio.Semaphore) -> Dict[str, Any]:
+    """Self-consistency QC WITHOUT the PRM: sample QUIZ_N chains and take the
+    majority answer + its agreement. The quiz needs a confident verified answer,
+    not per-step PRM scores, so the verifier is skipped (that was the timeout)."""
+    async with sem:
+        chains = await generate.generate_chains(question, QUIZ_N, temperature=0.8)
+    # unweighted vote: with no PRM scores, consensus agreement = fraction of
+    # chains that landed on the winning answer — exactly the self-consistency QC.
+    best, agreement, _ = consensus.run_consensus(chains)
+    return {"question": question, "verified_answer": best, "agreement": agreement}
 
 
 async def generate_verified_quiz(topic: str, ship: int = SHIP_COUNT) -> List[Dict[str, str]]:
@@ -45,8 +51,11 @@ async def generate_verified_quiz(topic: str, ship: int = SHIP_COUNT) -> List[Dic
     if not candidates:
         return []
 
-    # verify candidates concurrently; keep the confident ones
-    results = await asyncio.gather(*[_verify_question(q) for q in candidates], return_exceptions=True)
+    # verify candidates concurrently (bounded), keep the self-consistent ones
+    sem = asyncio.Semaphore(QUIZ_CONCURRENCY)
+    results = await asyncio.gather(
+        *[_verify_question(q, sem) for q in candidates], return_exceptions=True
+    )
     verified: List[Dict[str, str]] = []
     for r in results:
         if isinstance(r, Exception):
