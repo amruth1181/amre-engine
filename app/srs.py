@@ -19,11 +19,11 @@ def seed_card(user_id: int, problem: str, topic: str, source_journal_id: Optiona
     if c.fetchone():
         conn.close()
         return
-    due = (date.today() + timedelta(days=1)).isoformat()
+    due = date.today().isoformat()  # due immediately so a fresh mistake is reviewable right away
     c.execute(
         "INSERT INTO review (user_id, problem, topic, ease_factor, interval, repetitions, due_date, source_journal_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (user_id, problem, topic, 2.5, 1, 0, due, source_journal_id),
+        (user_id, problem, topic, 2.5, 0, 0, due, source_journal_id),
     )
     conn.commit()
     conn.close()
