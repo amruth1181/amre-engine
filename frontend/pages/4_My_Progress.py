@@ -31,6 +31,25 @@ c2.metric("Mistakes logged", profile.get("total_mistakes", 0))
 weakest = profile.get("weakest_topics") or []
 c3.metric("Weakest topic", weakest[0].replace("_", " ").title() if weakest else "—")
 
+# ---- gamification: streak / XP / level / badges ----
+st.markdown("### 🏆 Achievements")
+try:
+    g = api.gamify()
+    a1, a2, a3 = st.columns(3)
+    a1.metric("🔥 Day streak", g.get("streak", 0))
+    a2.metric("⭐ XP", g.get("xp", 0))
+    a3.metric("🎯 Level", g.get("level", 0))
+    into = g.get("xp_into_level", 0)
+    st.progress(min(1.0, into / 100.0),
+                text=f"{g.get('xp_to_next', 100)} XP to level {g.get('level', 0) + 1}")
+    badges = g.get("badges", [])
+    if badges:
+        st.markdown(" &nbsp; ".join(f"🎖️ **{b['badge']}**" for b in badges))
+    else:
+        st.caption("No badges yet — earn XP by solving, checking work, and taking quizzes.")
+except Exception:  # noqa: BLE001
+    st.caption("(Achievements unavailable right now.)")
+
 # ---- error-type breakdown ("70% of your misses are sign errors") ----
 st.markdown("### Error-type breakdown")
 breakdown = profile.get("error_breakdown", {})

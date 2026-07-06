@@ -39,11 +39,18 @@ if st.button("🔍 Check my work", type="primary"):
         if res.get("explanation"):
             st.markdown(res["explanation"])
 
-    st.markdown("### Your steps (PRM-scored)")
-    render.render_solution(res.get("steps", []), res.get("scores", []), res.get("badges", []))
+    view = st.radio("View", ["🔀 Diff view", "📋 List view"], horizontal=True, key="cw_view")
+    if view.startswith("🔀"):
+        render.render_diff(
+            res.get("steps", []), res.get("scores", []), res.get("badges", []),
+            res.get("verified_steps", []), res.get("error_step"),
+        )
+    else:
+        st.markdown("### Your steps (PRM-scored)")
+        render.render_solution(res.get("steps", []), res.get("scores", []), res.get("badges", []))
 
     if res.get("verified_solution"):
-        with st.expander("See the engine's verified solution"):
+        with st.expander("See the engine's full verified solution"):
             st.markdown(res["verified_solution"])
     st.caption(f"Verified answer: {res.get('verified_answer', '—')} · "
                f"confidence {res.get('confidence', 0) * 100:.0f}%")

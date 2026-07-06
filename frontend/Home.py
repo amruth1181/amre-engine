@@ -54,6 +54,19 @@ if not st.session_state.token:
 name = st.session_state.username or f"user {st.session_state.user_id}"
 st.success(f"Welcome back, **{name}** 👋")
 
+# ---- gamification banner: streak / XP / level ----
+try:
+    g = api.gamify()
+    b1, b2, b3 = st.columns(3)
+    b1.metric("🔥 Day streak", g.get("streak", 0))
+    b2.metric("⭐ XP", g.get("xp", 0))
+    b3.metric("🎯 Level", g.get("level", 0))
+    into = g.get("xp_into_level", 0)
+    st.progress(min(1.0, into / 100.0),
+                text=f"{g.get('xp_to_next', 100)} XP to level {g.get('level', 0) + 1}")
+except Exception:  # noqa: BLE001
+    pass
+
 # pull the user's profile to surface their weakest topic + offer one-click practice
 weakest_label = None
 try:
