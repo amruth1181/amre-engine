@@ -5,10 +5,32 @@ import httpx
 from typing import List, Dict, Any, AsyncIterator
 from . import segment
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # strip() guards against a trailing newline in the secret (illegal in an HTTP header)
-# Gemini's OpenAI-compatible endpoint: same request/response shape as before.
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-DEFAULT_MODEL = "gemini-2.5-flash"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # strip() guards against a trailing newline in the secret (illegal in an HTTP header)
+# Groq's OpenAI-compatible endpoint: same request/response shape as before.
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"  # fast on Groq, strong at high-school math, 1000 req/day free
+
+_HEADERS = {
+    "Authorization": f"Bearer {GROQ_API_KEY}",
+    "Content-Type": "application/json",
+}
+
+# transient statuses worth retrying (rate-limit burst / server overload)
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+async def _llm_post(client: httpx.AsyncClient, payload: Dict[str, Any],
+                       timeout: float = 45.0, retries: int = 4) -> httpx.Response:
+    """POST to the LLM, retrying transient 429/5xx on the same model with backoff
+    (handles rate-limit bursts and occasional server overloads)."""
+    resp = None
+    for attempt in range(retries):
+        resp = await client.post(GROQ_URL, json=payload, headers=_HEADERS, timeout=timeout)
+        if resp.status_code == 200 or resp.status_code not in _RETRY_STATUS:
+            return resp
+        await asyncio.sleep(1.0 * (attempt + 1))  # 1s, 2s, 3s backoff
+    return resp
+
 
 async def generate_single_chain(
     client: httpx.AsyncClient,
@@ -18,7 +40,7 @@ async def generate_single_chain(
     """
     Generate a single solution path/chain for a given problem.
     """
-    if not GEMINI_API_KEY:
+    if not GROQ_API_KEY:
         # If API key is missing, return a canned mock response to avoid crashing
         await asyncio.sleep(0.5)
         mock_text = (
@@ -31,13 +53,8 @@ async def generate_single_chain(
             "text": mock_text,
             "steps": segment.segment_steps(mock_text),
             "answer": "5",
-            "error": "Gemini API Key not set"
+            "error": "GROQ_API_KEY not set"
         }
-
-    headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
-        "Content-Type": "application/json",
-    }
 
     payload = {
         "model": DEFAULT_MODEL,
@@ -62,12 +79,7 @@ async def generate_single_chain(
     }
 
     try:
-        response = await client.post(
-            GEMINI_URL,
-            json=payload,
-            headers=headers,
-            timeout=45.0
-        )
+        response = await _llm_post(client, payload, timeout=45.0)
         if response.status_code == 200:
             data = response.json()
             choice_text = data["choices"][0]["message"]["content"]
@@ -78,29 +90,8 @@ async def generate_single_chain(
                 "steps": steps,
                 "answer": answer
             }
-            
-        # Try fallback model if the primary fails or is rate limited
-        elif response.status_code == 429 or response.status_code >= 500:
-            # Fall back to a lighter Gemini model if the primary is rate limited / erroring
-            payload["model"] = "gemini-2.0-flash"
-            response = await client.post(
-                GEMINI_URL,
-                json=payload,
-                headers=headers,
-                timeout=45.0
-            )
-            if response.status_code == 200:
-                data = response.json()
-                choice_text = data["choices"][0]["message"]["content"]
-                steps = segment.segment_steps(choice_text)
-                answer = segment.extract_answer(choice_text)
-                return {
-                    "text": choice_text,
-                    "steps": steps,
-                    "answer": answer
-                }
-                
-        # Error return
+
+        # Error return (already retried transient statuses inside _llm_post)
         return {
             "text": f"Error: API returned status code {response.status_code}\n{response.text}",
             "steps": [],
@@ -123,7 +114,8 @@ async def generate_chains(
     """
     Generate n reasoning chains concurrently.
     """
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+    # max_connections must cover N so all chains are truly concurrent (N can be 16).
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=max(20, n + 4))
     async with httpx.AsyncClient(limits=limits) as client:
         tasks = [
             generate_single_chain(client, problem, temperature)
@@ -136,7 +128,7 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
     """Over-generate candidate quiz questions for a topic (IMPLEMENTATION.md §9.3).
     The engine verifies them afterwards; here we just produce raw candidates."""
     pretty = topic.replace("_", " ")
-    if not GEMINI_API_KEY:
+    if not GROQ_API_KEY:
         # deterministic mock bank so the verified-quiz path still runs offline
         bank = [
             "Solve for x: 2x + 5 = 15",
@@ -152,10 +144,6 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
         ]
         return [bank[i % len(bank)] for i in range(n)]
 
-    headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
-        "Content-Type": "application/json",
-    }
     prompt = (
         f"Generate {n} distinct, self-contained {pretty} practice problems suitable for a "
         f"high-school student. Each must have a single unambiguous numeric or short answer. "
@@ -172,7 +160,7 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
     }
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(GEMINI_URL, json=payload, headers=headers, timeout=45.0)
+            response = await _llm_post(client, payload, timeout=45.0)
             if response.status_code == 200:
                 text = response.json()["choices"][0]["message"]["content"]
                 lines = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip() for ln in text.splitlines()]
@@ -184,16 +172,11 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
 
 async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> str:
     """
-    Query Gemini to explain why the student's step is wrong and show the correct way.
+    Query the LLM to explain why the student's step is wrong and show the correct way.
     """
-    if not GEMINI_API_KEY:
+    if not GROQ_API_KEY:
         return f"Error detected at Step {error_step_idx+1}: '{steps[error_step_idx]}'. Please verify the arithmetic or algebraic operations in this step."
-        
-    headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    
+
     steps_formatted = "\n".join([f"Step {i+1}: {step}" for i, step in enumerate(steps)])
     error_step_text = steps[error_step_idx]
     
@@ -217,12 +200,12 @@ async def explain_error(problem: str, steps: List[str], error_step_idx: int) -> 
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(GEMINI_URL, json=payload, headers=headers, timeout=30.0)
+            response = await _llm_post(client, payload, timeout=30.0)
             if response.status_code == 200:
                 data = response.json()
                 return data["choices"][0]["message"]["content"]
             else:
-                return f"Error: Gemini returned status {response.status_code}. The error is likely in Step {error_step_idx+1}."
+                return f"Error: model returned status {response.status_code}. The error is likely in Step {error_step_idx+1}."
     except Exception as e:
         return f"Could not generate tutor explanation: {e}. The verification flags Step {error_step_idx+1} as incorrect."
 
