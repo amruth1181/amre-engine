@@ -8,6 +8,8 @@ import streamlit as st
 from lib import api
 
 st.set_page_config(page_title="Learning Path", page_icon="🗺️", layout="wide")
+from lib import theme
+theme.apply_theme()
 st.title("🗺️ Your Learning Path")
 
 if not st.session_state.get("token"):

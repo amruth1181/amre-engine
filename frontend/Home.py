@@ -8,12 +8,14 @@ import streamlit as st
 from lib import api
 
 st.set_page_config(page_title="AMRE Tutor", page_icon="🎓", layout="wide")
+from lib import theme
+theme.apply_theme()
 
 st.session_state.setdefault("token", None)
 st.session_state.setdefault("user_id", None)
 st.session_state.setdefault("username", None)
 
-st.title("🎓 AMRE — Adaptive Math Reasoning Engine")
+theme.hero("AMRE", "Adaptive Math Reasoning Engine")
 
 
 def _do_auth(fn, username, password, success_msg=None):
