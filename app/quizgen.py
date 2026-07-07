@@ -37,7 +37,8 @@ async def _verify_question(question: str, sem: asyncio.Semaphore) -> Dict[str, A
     majority answer + its agreement. The quiz needs a confident verified answer,
     not per-step PRM scores, so the verifier is skipped (that was the timeout)."""
     async with sem:
-        chains = await generate.generate_chains(question, QUIZ_N, temperature=0.8)
+        # cap max_tokens: quiz problems are short, so 384 is plenty and slashes token spend
+        chains = await generate.generate_chains(question, QUIZ_N, temperature=0.8, max_tokens=384)
     # unweighted vote: with no PRM scores, consensus agreement = fraction of
     # chains that landed on the winning answer — exactly the self-consistency QC.
     best, agreement, _ = consensus.run_consensus(chains)

@@ -35,7 +35,8 @@ async def _llm_post(client: httpx.AsyncClient, payload: Dict[str, Any],
 async def generate_single_chain(
     client: httpx.AsyncClient,
     problem: str,
-    temperature: float
+    temperature: float,
+    max_tokens: int = 1024,
 ) -> Dict[str, Any]:
     """
     Generate a single solution path/chain for a given problem.
@@ -75,7 +76,7 @@ async def generate_single_chain(
             {"role": "user", "content": problem}
         ],
         "temperature": temperature,
-        "max_tokens": 1024
+        "max_tokens": max_tokens
     }
 
     try:
@@ -109,7 +110,8 @@ async def generate_single_chain(
 async def generate_chains(
     problem: str,
     n: int,
-    temperature: float = 0.8
+    temperature: float = 0.8,
+    max_tokens: int = 1024,
 ) -> List[Dict[str, Any]]:
     """
     Generate n reasoning chains concurrently.
@@ -118,7 +120,7 @@ async def generate_chains(
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=max(20, n + 4))
     async with httpx.AsyncClient(limits=limits) as client:
         tasks = [
-            generate_single_chain(client, problem, temperature)
+            generate_single_chain(client, problem, temperature, max_tokens)
             for _ in range(n)
         ]
         results = await asyncio.gather(*tasks)
@@ -156,7 +158,7 @@ async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.9,
-        "max_tokens": 1024,
+        "max_tokens": 600,  # ~6 short one-line problems — keeps the daily token budget in check
     }
     try:
         async with httpx.AsyncClient() as client:
