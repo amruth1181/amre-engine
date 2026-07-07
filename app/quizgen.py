@@ -19,11 +19,14 @@ from typing import Dict, Any, List
 from . import generate
 from . import consensus
 
-OVERGEN = 8            # candidates to author (ONE LLM call authors all of them)
+OVERGEN = 6            # candidates to author (ONE LLM call authors all of them)
 SHIP_COUNT = 5         # verified questions to ship
-QUIZ_N = 5             # self-consistency chains per candidate (no PRM — QC only)
-AGREEMENT_MIN = 0.6    # keep a question if >= 60% of its chains agree on the answer
-QUIZ_CONCURRENCY = 6   # cap concurrent candidate-solves so we don't storm Groq's rate limit
+QUIZ_N = 3             # self-consistency chains per candidate (no PRM — QC only)
+AGREEMENT_MIN = 0.5    # keep a question if a majority of its chains agree on the answer
+# Groq free tier caps ~30 requests/min and ~12k tokens/min. Keep the burst small:
+# peak concurrent Groq calls = QUIZ_CONCURRENCY * QUIZ_N = 3 * 3 = 9 (was 6*5=30,
+# which tripped the per-minute limits -> 429 cascade -> 0 verified -> 503).
+QUIZ_CONCURRENCY = 3
 
 _cache: Dict[str, Dict[str, Any]] = {}
 _CACHE_TTL = 60 * 60  # 1h
@@ -65,5 +68,6 @@ async def generate_verified_quiz(topic: str, ship: int = SHIP_COUNT) -> List[Dic
         if len(verified) >= ship:
             break
 
-    _cache[topic] = {"ts": time.time(), "questions": verified}
+    if verified:  # never cache an empty/failed result (would 503 for an hour)
+        _cache[topic] = {"ts": time.time(), "questions": verified}
     return verified[:ship]
