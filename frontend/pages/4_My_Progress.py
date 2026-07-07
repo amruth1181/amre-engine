@@ -8,10 +8,10 @@ import streamlit as st
 
 from lib import api
 
-st.set_page_config(page_title="My Progress", page_icon="📊", layout="wide")
+st.set_page_config(page_title="My Progress", page_icon="Δ", layout="wide")
 from lib import theme
 theme.apply_theme()
-st.title("📊 My Progress")
+st.title("Δ  My Progress")
 
 if not st.session_state.get("token"):
     st.warning("Please login first.")

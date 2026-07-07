@@ -9,10 +9,10 @@ import streamlit as st
 
 from lib import api
 
-st.set_page_config(page_title="Teacher", page_icon="🏫", layout="wide")
+st.set_page_config(page_title="Teacher", page_icon="∈", layout="wide")
 from lib import theme
 theme.apply_theme()
-st.title("🏫 Teacher / Class Dashboard")
+st.title("∈  Teacher / Class Dashboard")
 
 if not st.session_state.get("token"):
     st.warning("Please login first.")

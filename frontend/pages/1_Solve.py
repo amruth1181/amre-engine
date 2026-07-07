@@ -11,10 +11,10 @@ import streamlit as st
 
 from lib import api, render
 
-st.set_page_config(page_title="Solve", page_icon="🔢", layout="wide")
+st.set_page_config(page_title="Solve", page_icon="∫", layout="wide")
 from lib import theme
 theme.apply_theme()
-st.title("🔢 Solve a Math Problem")
+st.title("∫  Solve a Math Problem")
 
 if not st.session_state.get("token"):
     st.warning("Please login first.")
@@ -99,7 +99,7 @@ if st.button("🚀 Solve", type="primary"):
     if chains:
         wc = weak.get("chain", 0)
         rep = chains[wc] if wc < len(chains) else chains[0]
-        st.markdown("### ✅ Verified solution")
+        st.markdown("### ∎ Verified solution")
         render.render_solution(rep.get("steps", []), rep.get("scores", []), rep.get("badges", []))
         if rep.get("steps") and rep.get("scores"):
             st.caption(f"Weakest link: step {weak.get('step', 0) + 1}")

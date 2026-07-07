@@ -7,10 +7,10 @@ import streamlit as st
 
 from lib import api, render
 
-st.set_page_config(page_title="Review", page_icon="🔁", layout="wide")
+st.set_page_config(page_title="Review", page_icon="∮", layout="wide")
 from lib import theme
 theme.apply_theme()
-st.title("🔁 Spaced Repetition Review")
+st.title("∮  Spaced Repetition Review")
 
 if not st.session_state.get("token"):
     st.warning("Please login first.")

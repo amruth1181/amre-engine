@@ -89,16 +89,16 @@ except Exception:  # noqa: BLE001
 st.markdown("### What would you like to do?")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    if st.button("🔢 Solve", use_container_width=True):
+    if st.button("∫  Solve", use_container_width=True):
         st.switch_page("pages/1_Solve.py")
 with c2:
-    if st.button("📝 Check my work", use_container_width=True):
+    if st.button("≟  Check my work", use_container_width=True):
         st.switch_page("pages/2_Check_my_work.py")
 with c3:
-    if st.button("🧠 Quiz", use_container_width=True):
+    if st.button("∴  Quiz", use_container_width=True):
         st.switch_page("pages/3_Quiz.py")
 with c4:
-    if st.button("📊 My Progress", use_container_width=True):
+    if st.button("Δ  My Progress", use_container_width=True):
         st.switch_page("pages/4_My_Progress.py")
 
 if weakest_label and st.button(f"⚡ Practice my weakest topic ({weakest_label})", type="primary"):

@@ -7,10 +7,10 @@ import streamlit as st
 
 from lib import api, render
 
-st.set_page_config(page_title="Check My Work", page_icon="📝", layout="wide")
+st.set_page_config(page_title="Check My Work", page_icon="≟", layout="wide")
 from lib import theme
 theme.apply_theme()
-st.title("📝 Check My Work")
+st.title("≟  Check My Work")
 
 if not st.session_state.get("token"):
     st.warning("Please login first.")
