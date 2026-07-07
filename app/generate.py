@@ -113,7 +113,10 @@ async def generate_single_chain(
                 "answer": answer
             }
 
-        # Error return (already retried transient statuses inside _llm_post)
+        # Error return (already retried transient statuses inside _llm_post).
+        # Log the provider/model + status/body so a misconfigured provider (bad key
+        # -> 401, wrong model id -> 404) is diagnosable from the Space logs.
+        print(f"⚠️ LLM error {response.status_code} [{LLM_PROVIDER}/{DEFAULT_MODEL}]: {response.text[:400]}")
         return {
             "text": f"Error: API returned status code {response.status_code}\n{response.text}",
             "steps": [],
@@ -121,6 +124,7 @@ async def generate_single_chain(
             "error": f"API error: {response.status_code}"
         }
     except Exception as e:
+        print(f"⚠️ LLM exception [{LLM_PROVIDER}/{DEFAULT_MODEL}]: {e}")
         return {
             "text": f"Error during generation: {e}",
             "steps": [],
