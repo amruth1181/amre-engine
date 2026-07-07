@@ -126,6 +126,12 @@ def gamify() -> dict:
     return _get("/gamify")
 
 
+# ---- weekly wellness summary + alerts ----
+def wellness() -> dict:
+    # 90s so a cold-start wake doesn't time out the LLM-backed summary
+    return _get("/wellness", timeout=90)
+
+
 # ---- per-user reads ----
 def history() -> dict:
     return _get("/history")
