@@ -126,6 +126,37 @@ async def generate_chains(
         results = await asyncio.gather(*tasks)
         return results
 
+
+async def generate_text(prompt: str, system: str = "", max_tokens: int = 220,
+                        temperature: float = 0.7) -> str:
+    """Send a single prompt to the LLM and return the plain-text reply.
+
+    General-purpose helper (reuses _llm_post) for free-form generation such as the
+    weekly wellness summary. Returns "" on any failure so callers can fall back to a
+    templated string — it never raises."""
+    if not GROQ_API_KEY:
+        return ""
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await _llm_post(client, payload, timeout=30.0)
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        print(f"⚠️ generate_text: API status {resp.status_code}")
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ generate_text failed: {e}")
+    return ""
+
+
 async def generate_quiz_questions(topic: str, n: int = 16) -> List[str]:
     """Over-generate candidate quiz questions for a topic (IMPLEMENTATION.md §9.3).
     The engine verifies them afterwards; here we just produce raw candidates."""

@@ -27,6 +27,7 @@ from . import studysheet as studysheet_mod
 from . import gamify
 from . import srs
 from . import classes as classes_mod
+from . import wellness as wellness_mod
 
 load_dotenv()
 
@@ -373,6 +374,13 @@ def knowledge_graph(authorization: str = Header(None)):
 def get_gamify(authorization: str = Header(None)):
     user_id = auth.require_user(authorization)
     return gamify.stats(user_id)
+
+
+# ==================== WEEKLY WELLNESS SUMMARY + ALERTS ====================
+@app.get("/wellness")
+async def get_wellness(authorization: str = Header(None)):
+    user_id = auth.require_user(authorization)
+    return await wellness_mod.build_summary(user_id)
 
 
 # ==================== HISTORY ====================
