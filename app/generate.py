@@ -5,10 +5,31 @@ import httpx
 from typing import List, Dict, Any, AsyncIterator
 from . import segment
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()  # strip() guards against a trailing newline in the secret (illegal in an HTTP header)
-# Groq's OpenAI-compatible endpoint: same request/response shape as before.
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"  # fast on Groq, strong at high-school math, 1000 req/day free
+# ---- LLM provider selection (Groq | Cerebras) -------------------------------
+# Both API keys can live in the environment at once; LLM_PROVIDER picks the
+# ACTIVE one. Both are OpenAI-compatible chat/completions endpoints, so only the
+# base URL, API key, and model id differ. Switching = change LLM_PROVIDER and
+# restart (an HF secret change auto-restarts the Space). Selection happens ONCE
+# here at import time — zero per-request overhead.
+_PROVIDERS = {
+    "groq":     {"url": "https://api.groq.com/openai/v1/chat/completions",
+                 "key_env": "GROQ_API_KEY",     "model": "llama-3.3-70b-versatile"},
+    "cerebras": {"url": "https://api.cerebras.ai/v1/chat/completions",
+                 "key_env": "CEREBRAS_API_KEY", "model": "llama-3.3-70b"},
+}
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "groq").strip().lower()
+if LLM_PROVIDER not in _PROVIDERS:
+    print(f"⚠️ unknown LLM_PROVIDER={LLM_PROVIDER!r}; falling back to 'groq'")
+    LLM_PROVIDER = "groq"
+_CFG = _PROVIDERS[LLM_PROVIDER]
+
+# GROQ_* / DEFAULT_MODEL kept as ALIASES of the active provider so the rest of
+# this module (the "is a key set?" guards and payload `model` fields) is unchanged.
+# LLM_BASE_URL / LLM_MODEL env overrides fix a URL/model-id mismatch without code.
+GROQ_URL = os.environ.get("LLM_BASE_URL", _CFG["url"])
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", _CFG["model"])
+GROQ_API_KEY = os.environ.get(_CFG["key_env"], "").strip()  # strip() guards a trailing newline (illegal in an HTTP header)
+print(f"✅ LLM provider: {LLM_PROVIDER} · model={DEFAULT_MODEL} · key={'set' if GROQ_API_KEY else 'MISSING'}")
 
 _HEADERS = {
     "Authorization": f"Bearer {GROQ_API_KEY}",
