@@ -15,7 +15,7 @@ _PROVIDERS = {
     "groq":     {"url": "https://api.groq.com/openai/v1/chat/completions",
                  "key_env": "GROQ_API_KEY",     "model": "llama-3.3-70b-versatile"},
     "cerebras": {"url": "https://api.cerebras.ai/v1/chat/completions",
-                 "key_env": "CEREBRAS_API_KEY", "model": "llama-3.3-70b"},
+                 "key_env": "CEREBRAS_API_KEY", "model": "gpt-oss-120b"},  # free tier ~3000 tok/s
 }
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "groq").strip().lower()
 if LLM_PROVIDER not in _PROVIDERS:
