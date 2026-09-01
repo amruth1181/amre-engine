@@ -9,6 +9,7 @@
 # Streamlit Cloud deploy config:
 #   Main file path : frontend/Home.py
 #   Secret         : ENGINE_URL = "https://amruth1181-amre-engine-v3.hf.space"
+#   Deployed at    : https://amre-engine-5pechonkoqr7zd7us4m5no.streamlit.app
 streamlit>=1.30
 requests
 pandas

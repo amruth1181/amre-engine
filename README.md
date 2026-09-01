@@ -14,10 +14,17 @@ FastAPI backend for the Adaptive Math Reasoning Engine (AMRE). The engine holds
 **all logic + persistence**; the Streamlit frontend only holds a session token
 and calls the engine over REST. See `IMPLEMENTATION.md` for the full design.
 
-**Live** — the engine is deployed and running:
-- API → <https://amruth1181-amre-engine-v3.hf.space> (`GET /health` for a ping)
-- Space → <https://huggingface.co/spaces/amruth1181/amre-engine-v3>
-- Persistence → **Turso** (hosted libSQL), so user data survives Space restarts.
+## Live
+
+| | |
+|---|---|
+| **App** (Streamlit Cloud) | <https://amre-engine-5pechonkoqr7zd7us4m5no.streamlit.app> |
+| **Engine** (FastAPI, HF Space) | <https://amruth1181-amre-engine-v3.hf.space> · [Space page](https://huggingface.co/spaces/amruth1181/amre-engine-v3) |
+| **Source** | <https://github.com/amruth1181/amre-engine> |
+
+User data lives in **Turso** (hosted libSQL), so it survives Space restarts. The
+free-tier Space sleeps when idle — the first request after a nap cold-starts the
+container, so give it a moment (`GET /health` wakes it).
 
 **Core solve pipeline:** router → generation → PRM step-scoring → PRM-weighted
 consensus vote → isotonic calibration → per-user store.
