@@ -14,6 +14,11 @@ FastAPI backend for the Adaptive Math Reasoning Engine (AMRE). The engine holds
 **all logic + persistence**; the Streamlit frontend only holds a session token
 and calls the engine over REST. See `IMPLEMENTATION.md` for the full design.
 
+**Live** — the engine is deployed and running:
+- API → <https://amruth1181-amre-engine-v3.hf.space> (`GET /health` for a ping)
+- Space → <https://huggingface.co/spaces/amruth1181/amre-engine-v3>
+- Persistence → **Turso** (hosted libSQL), so user data survives Space restarts.
+
 **Core solve pipeline:** router → generation → PRM step-scoring → PRM-weighted
 consensus vote → isotonic calibration → per-user store.
 
@@ -31,9 +36,12 @@ consensus vote → isotonic calibration → per-user store.
 - **Consensus** (`app/consensus.py`) — answer normalization + PRM-weighted vote.
 - **Calibration** (`app/calibration.py`) — isotonic `agreement → P(correct)`; the
   confidence shown is calibrated, never the raw (saturating) PRM score.
-- **Persistence** (`app/db.py`) — **Turso / libSQL** (hosted, SQLite-compatible)
-  when `TURSO_DATABASE_URL` is set, so per-user data survives Space restarts;
-  falls back to local `sqlite3` otherwise.
+- **Persistence** (`app/db.py`) — **Turso / libSQL**, a hosted SQLite-compatible
+  database, is what the deployed engine runs on: it's enabled by
+  `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`, and it's the reason per-user data
+  (history, journal, SRS cards, classes) survives Space restarts instead of
+  dying with the container's disk. With those vars unset the engine falls back
+  to a local `sqlite3` file, which is fine for tests and offline dev only.
 
 ## Endpoints
 
@@ -95,7 +103,7 @@ huggingface/ HF deploy notes
 | `GROQ_API_KEY` / `CEREBRAS_API_KEY` | generation key(s) |
 | `LLM_PROVIDER` | `groq` (default) or `cerebras`; `LLM_BASE_URL` / `LLM_MODEL` override the URL/model id |
 | `JWT_SECRET` | session-token signing key |
-| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | persistent DB (else local sqlite) |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | **Turso** libSQL credentials — set in the deployed Space; without them the engine drops to a local sqlite file |
 | `COLAB_PRM_URL` | optional 7B PRM tunnel (auto-fails over to the 1.5B floor) |
 | `PRM_MODEL_REPO` | PRM repo (default `Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B`) |
 | `PRM_QUANTIZE` | `0` (default, fp32) / `1` (int8) |
@@ -123,8 +131,23 @@ streamlit run frontend/Home.py                 # set ENGINE_URL in frontend/.str
 ```
 
 ## Deploy
-- **Engine** → HF Space (Docker, CPU 16 GB): `amruth1181/amre-engine-v3`. `torch`
-  is installed CPU-only in the `Dockerfile` (the default CUDA wheel breaks the free
-  Space). Push to the Space remote to rebuild.
+
+Both tiers are already deployed; this section is how to rebuild them.
+
+- **Engine** → live on HF Space (Docker, CPU 16 GB):
+  [`amruth1181/amre-engine-v3`](https://huggingface.co/spaces/amruth1181/amre-engine-v3)
+  → <https://amruth1181-amre-engine-v3.hf.space>. `torch` is installed CPU-only in
+  the `Dockerfile` (the default CUDA wheel breaks the free Space). Pushing to the
+  Space remote rebuilds it. Set `GROQ_API_KEY` (or `CEREBRAS_API_KEY`),
+  `JWT_SECRET`, and the two `TURSO_*` vars under Space → Settings → Variables and
+  secrets.
+- **Database** → **Turso** (hosted libSQL). Provisioned separately from the Space;
+  the engine reaches it over the network, so a Space rebuild never touches user
+  data.
 - **Frontend** → Streamlit Community Cloud (main file `frontend/Home.py`; secret
   `ENGINE_URL = https://amruth1181-amre-engine-v3.hf.space`).
+
+## Author
+
+Built by **Amruth Ganta** ([@amruth1181](https://github.com/amruth1181)) — sole
+author and maintainer.
