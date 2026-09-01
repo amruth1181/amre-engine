@@ -15,3 +15,15 @@ router_params.json
 .claude/
 DEBUGGING_JOURNEY.md
 
+
+# Obsidian vault config
+.obsidian/
+
+# Local working notes & editor config — not part of the shipped Space
+docs/
+.vscode/
+CLAUDE.md
+.claudeignore
+
+# Personal / non-project material (CVs, applications) — keep OUT of this public repo
+applications/
