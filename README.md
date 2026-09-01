@@ -65,7 +65,9 @@ All data endpoints derive `user_id` from the bearer token — never a client-sen
 - `POST /topic {problem}` → `{topic, resources[], mini_lesson}`
 - `POST /quiz {topic}` → `{quiz_id, questions:[{text, verified_answer}]}` (self-consistency-verified)
 - `POST /quiz/grade {question, verified_answer, user_solution}` → `{correct, error_step?, explanation?}`
-- `POST /ocr {image}` → `{latex}` (pix2tex; 503 if unavailable)
+- `POST /ocr {image}` → `{latex}` — pix2tex. **Disabled in the deployed build**
+  (it pulls torchvision + opencv, too heavy for the free Space), so it returns
+  503 there; re-enable by uncommenting `pix2tex` in `requirements.txt`
 - `POST /selfrate {item_id, user_conf}` → `{ok}` (confidence metacognition)
 
 **Spaced repetition (SM-2, `app/srs.py`)**
@@ -84,7 +86,7 @@ All data endpoints derive `user_id` from the bearer token — never a client-sen
 - `GET /wellness` → 7-day activity summary + a short LLM coach note (`app/wellness.py`)
 - `GET /knowledge-graph` → topic-mastery graph for the Learning Path
 - `GET /studysheet` → per-user revision **PDF** (fpdf2; mistakes + reading + quiz)
-- `GET /health` — health check / keep-alive ping
+- `GET /` · `GET /health` — liveness / keep-alive ping (both unauthenticated)
 - `WS  /ws/solve` — legacy streaming endpoint (unused by the frontend)
 
 ## Frontend (`frontend/`, Streamlit)
@@ -114,6 +116,10 @@ huggingface/ HF deploy notes
 | `COLAB_PRM_URL` | optional 7B PRM tunnel (auto-fails over to the 1.5B floor) |
 | `PRM_MODEL_REPO` | PRM repo (default `Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B`) |
 | `PRM_QUANTIZE` | `0` (default, fp32) / `1` (int8) |
+| `PRM_DTYPE` | `fp32` (default) |
+| `PRM_MAX_TOKENS` / `PRM_BATCH` / `PRM_THREADS` | PRM tuning — defaults `4096` / `8` / `4` (`app/prm_local.py`) |
+| `DB_PATH` | sqlite fallback path only; defaults to `/data/amre.db` when `/data` exists, else `./amre.db`. Ignored when Turso is configured |
+| `CALIBRATION_PATH` / `ROUTER_PARAMS_PATH` | override the fitted-artifact paths |
 
 ## Offline scripts (run from the repo root)
 - `python scripts/fit_calibration.py --data runs.jsonl` — fit `calibration.pkl` (isotonic agreement→P(correct))
@@ -143,8 +149,10 @@ Both tiers are already deployed; this section is how to rebuild them.
 
 - **Engine** → live on HF Space (Docker, CPU 16 GB):
   [`amruth1181/amre-engine-v3`](https://huggingface.co/spaces/amruth1181/amre-engine-v3)
-  → <https://amruth1181-amre-engine-v3.hf.space>. `torch` is installed CPU-only in
-  the `Dockerfile` (the default CUDA wheel breaks the free Space). Pushing to the
+  → <https://amruth1181-amre-engine-v3.hf.space>. `torch` is installed from the
+  CPU-only index in the `Dockerfile` and **pinned to 2.6.0** — the default wheel
+  ships CUDA (~2.5 GB, blows the free Space), and unpinned pulls a 2.12.x build
+  whose CPU path makes a PRM pass take ~2 min instead of ~2 s. Pushing to the
   Space remote rebuilds it. Set `GROQ_API_KEY` (or `CEREBRAS_API_KEY`),
   `JWT_SECRET`, and the two `TURSO_*` vars under Space → Settings → Variables and
   secrets.
