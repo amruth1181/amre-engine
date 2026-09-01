@@ -12,7 +12,9 @@ pinned: false
 
 FastAPI backend for the Adaptive Math Reasoning Engine (AMRE). The engine holds
 **all logic + persistence**; the Streamlit frontend only holds a session token
-and calls the engine over REST. See `IMPLEMENTATION.md` for the full design.
+and calls the engine over REST. Module docstrings cite sections of the design
+spec as `IMPLEMENTATION.md §x`; that spec is kept privately and is not part of
+this repo — the `.py` files are the source of truth.
 
 ## Live
 
@@ -101,10 +103,17 @@ is ever loaded in the frontend.
 ```
 app/         FastAPI engine package (solve pipeline + learning loop + persistence)
 scripts/     offline prep + diagnostics (run from the repo root)
-tests/       pytest suite
+tests/       pytest suite (auth, router, segment, consensus, calibration)
 frontend/    Streamlit app (Home + pages/ + lib/ + .streamlit/)
 huggingface/ HF deploy notes
+Dockerfile   HF Space image (CPU-only torch, then requirements.txt)
 ```
+
+`tests/conftest.py` points every test at a throwaway SQLite file and forces the
+identity-calibration fallback, so the suite never touches your real DB or the
+fitted artifacts. With no `GROQ_API_KEY` / `CEREBRAS_API_KEY` in the
+environment, `app/generate.py` serves its deterministic mock bank — `pytest -q`
+then runs with no network calls and no model download.
 
 ## Environment / secrets
 | Var | Purpose |
